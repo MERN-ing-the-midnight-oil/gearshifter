@@ -1,0 +1,43 @@
+{
+  "name": "gear-swap-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "packages/*"
+    ],
+    "nohoist": [
+      "**/expo",
+      "**/expo/**",
+      "**/expo-router",
+      "**/expo-router/**",
+      "**/@expo/**",
+      "**/react",
+      "**/react/**",
+      "**/react-native",
+      "**/react-native/**",
+      "**/react-native-*",
+      "**/react-native-*/**",
+      "**/@supabase/supabase-js",
+      "**/@supabase/**"
+    ]
+  },
+  "scripts": {
+    "start": "yarn workspace seller-app start",
+    "seller:start": "yarn workspace seller-app start",
+    "seller:ios": "yarn workspace seller-app ios",
+    "seller:android": "yarn workspace seller-app android",
+    "organizer:start": "yarn workspace organizer-app start",
+    "organizer:ios": "yarn workspace organizer-app ios",
+    "organizer:android": "yarn workspace organizer-app android",
+    "shared:build": "yarn workspace shared build",
+    "type-check": "yarn workspaces run type-check"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "yarn": ">=1.22.0"
+  }
+}
