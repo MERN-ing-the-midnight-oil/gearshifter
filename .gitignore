@@ -65,7 +65,11 @@ android/local.properties
 # TypeScript
 *.tsbuildinfo
 
+# Expo Router: ignore compiled .js in app dir to avoid duplicate route errors
+packages/*/app/**/*.js
+
 # Supabase
 .branches
 .temp
 
+.supabase_service_role_key

@@ -2,16 +2,26 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { useUpcomingEvents } from 'shared';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
+import { theme } from '../../lib/theme';
 
 export default function EventsScreen() {
   const { events, loading, error, refetch } = useUpcomingEvents();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
 
+  console.log('[EventsScreen] Render:', { 
+    eventsCount: events.length, 
+    loading, 
+    error: error?.message,
+    events 
+  });
+
   const onRefresh = async () => {
+    console.log('[EventsScreen] Refreshing...');
     setRefreshing(true);
     await refetch();
     setRefreshing(false);
+    console.log('[EventsScreen] Refresh complete');
   };
 
   const formatDate = (date: Date) => {
@@ -44,13 +54,13 @@ export default function EventsScreen() {
 
   const getEventStatusBadgeStyle = (status: string) => {
     const styles: Record<string, { backgroundColor: string }> = {
-      registration: { backgroundColor: '#4A90E2' },
-      checkin: { backgroundColor: '#FFA500' },
-      shopping: { backgroundColor: '#50C878' },
-      pickup: { backgroundColor: '#9B59B6' },
-      closed: { backgroundColor: '#6C757D' },
+      registration: { backgroundColor: theme.status.registration },
+      checkin: { backgroundColor: theme.status.checkin },
+      shopping: { backgroundColor: theme.status.shopping },
+      pickup: { backgroundColor: theme.status.pickup },
+      closed: { backgroundColor: theme.status.closed },
     };
-    return styles[status] || { backgroundColor: '#6C757D' };
+    return styles[status] || { backgroundColor: theme.status.closed };
   };
 
   const isRegistrationOpen = (event: any) => {
@@ -63,7 +73,7 @@ export default function EventsScreen() {
   if (loading && !refreshing) {
     return (
       <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color={theme.activityIndicator} />
         <Text style={styles.loadingText}>Loading events...</Text>
       </View>
     );
@@ -135,7 +145,9 @@ export default function EventsScreen() {
                   <View style={styles.eventDetailRow}>
                     <Text style={styles.eventDetailIcon}>💰</Text>
                     <Text style={styles.eventDetailText}>
-                      Commission: {Math.round(event.organization.commissionRate * 100)}%
+                      Commission: {event.organization.commissionRate != null 
+                        ? `${Math.round(event.organization.commissionRate * 100)}%`
+                        : 'No commission'}
                     </Text>
                   </View>
                 )}
@@ -159,7 +171,7 @@ export default function EventsScreen() {
 
               <View style={styles.eventAction}>
                 <Text style={styles.eventActionText}>
-                  {isRegistrationOpen(event) ? 'View Details & Add Items' : 'View Details'}
+                  {isRegistrationOpen(event) ? 'View Details & Pre-register Items' : 'View Details'}
                 </Text>
                 <Text style={styles.eventActionArrow}>→</Text>
               </View>
@@ -174,43 +186,43 @@ export default function EventsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: theme.background,
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: theme.background,
     padding: 20,
   },
   loadingText: {
     marginTop: 10,
-    color: '#666',
+    color: theme.textSecondary,
   },
   header: {
     padding: 20,
     paddingTop: 40,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#1A1A1A',
+    color: theme.text,
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: theme.textSecondary,
   },
   eventsList: {
     padding: 16,
   },
   eventCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
-    shadowColor: '#000',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -229,12 +241,12 @@ const styles = StyleSheet.create({
   eventName: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#1A1A1A',
+    color: theme.text,
     marginBottom: 4,
   },
   organizationName: {
     fontSize: 14,
-    color: '#666',
+    color: theme.textSecondary,
   },
   eventStatusBadge: {
     paddingHorizontal: 10,
@@ -244,7 +256,7 @@ const styles = StyleSheet.create({
   eventStatusText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: theme.pureWhite,
     textTransform: 'uppercase',
   },
   eventDetails: {
@@ -261,22 +273,22 @@ const styles = StyleSheet.create({
   },
   eventDetailText: {
     fontSize: 14,
-    color: '#666',
+    color: theme.textSecondary,
   },
   registrationInfo: {
     marginTop: 8,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E5E5E5',
+    borderTopColor: theme.border,
   },
   registrationText: {
     fontSize: 13,
-    color: '#4A90E2',
+    color: theme.status.registration,
     fontWeight: '500',
   },
   registrationTextClosed: {
     fontSize: 13,
-    color: '#999',
+    color: theme.textSecondary,
   },
   eventAction: {
     flexDirection: 'row',
@@ -285,16 +297,16 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E5E5E5',
+    borderTopColor: theme.border,
   },
   eventActionText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#007AFF',
+    color: theme.link,
   },
   eventActionArrow: {
     fontSize: 18,
-    color: '#007AFF',
+    color: theme.link,
   },
   emptyState: {
     padding: 40,
@@ -303,34 +315,34 @@ const styles = StyleSheet.create({
   emptyStateText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#1A1A1A',
+    color: theme.text,
     marginBottom: 8,
   },
   emptyStateSubtext: {
     fontSize: 14,
-    color: '#666',
+    color: theme.textSecondary,
     textAlign: 'center',
   },
   errorText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#DC3545',
+    color: theme.error,
     marginBottom: 8,
   },
   errorSubtext: {
     fontSize: 14,
-    color: '#666',
+    color: theme.textSecondary,
     textAlign: 'center',
     marginBottom: 20,
   },
   retryButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.button,
     borderRadius: 8,
     paddingHorizontal: 24,
     paddingVertical: 12,
   },
   retryButtonText: {
-    color: '#FFFFFF',
+    color: theme.buttonText,
     fontSize: 16,
     fontWeight: '600',
   },

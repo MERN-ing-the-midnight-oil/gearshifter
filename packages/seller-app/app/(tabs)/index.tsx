@@ -1,66 +1,159 @@
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, RefreshControl } from 'react-native';
-import { useAuth, useItems, useSellerStats, useCurrentEvent, useRecentTransactions, getEstimatedPayout, getFinalPayout } from 'shared';
-import { useRouter } from 'expo-router';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  TouchableOpacity,
+  RefreshControl,
+} from 'react-native';
+import { StaffItemQrSection } from '../../components/StaffItemQrSection';
+import {
+  useAuth,
+  useEvents,
+  getCurrentSeller,
+  useItemsByEvent,
+  deleteSellerPendingItem,
+  getSellerFacingItemTitle,
+  formatSellerItemStatusLabel,
+  type Item,
+  type ItemStatus,
+  type Organization,
+} from 'shared';
+import { useRouter, useLocalSearchParams, useGlobalSearchParams } from 'expo-router';
 import { useState, useEffect } from 'react';
+import { confirmAction } from '../../lib/alerts';
+
+/** Matches `recordSale`: seller gets listPrice × (1 − commissionRate). Rate is a decimal (e.g. 0.15 = 15%). */
+function estimatedSellerProceeds(
+  listPrice: number,
+  commissionRate: number | null | undefined
+): number {
+  const r = commissionRate ?? 0;
+  if (Number.isNaN(listPrice) || listPrice < 0) return 0;
+  return Math.round(listPrice * (1 - r) * 100) / 100;
+}
+
+function statusBadgeStyle(status: ItemStatus) {
+  switch (status) {
+    case 'sold':
+      return { backgroundColor: '#28A745' };
+    case 'for_sale':
+      return { backgroundColor: '#007AFF' };
+    case 'checked_in':
+      return { backgroundColor: '#6F42C1' };
+    case 'pending':
+      return { backgroundColor: '#FD7E14' };
+    case 'picked_up':
+      return { backgroundColor: '#20C997' };
+    case 'donated':
+    case 'donated_abandoned':
+      return { backgroundColor: '#6C757D' };
+    case 'unclaimed':
+      return { backgroundColor: '#B8860B' };
+    case 'withdrawn':
+      return { backgroundColor: '#ADB5BD' };
+    case 'lost':
+    case 'damaged':
+      return { backgroundColor: '#DC3545' };
+    default:
+      return { backgroundColor: '#6C757D' };
+  }
+}
 
 export default function DashboardScreen() {
   const { user, loading: authLoading } = useAuth();
-  const { items, loading: itemsLoading, refetch: refetchItems } = useItems(user?.id || null);
-  const { stats, loading: statsLoading, refetch: refetchStats } = useSellerStats(user?.id || null);
-  const { event: currentEvent, loading: eventLoading, refetch: refetchEvent } = useCurrentEvent(user?.id || null);
-  const { transactions, loading: transactionsLoading } = useRecentTransactions(user?.id || null, 3);
+  const { events, loading: eventsLoading, refetch: refetchEvents } = useEvents();
   const router = useRouter();
+  const localParams = useLocalSearchParams<{ eventId?: string }>();
+  const globalParams = useGlobalSearchParams<{ eventId?: string }>();
+  const eventIdParam =
+    typeof localParams.eventId === 'string'
+      ? localParams.eventId
+      : typeof globalParams.eventId === 'string'
+        ? globalParams.eventId
+        : undefined;
   const [refreshing, setRefreshing] = useState(false);
-  const [payoutInfo, setPayoutInfo] = useState<{
-    estimated?: { estimatedPayout: number; itemsSold: number };
-    final?: { totalPayout: number; itemsSold: number };
-  } | null>(null);
-  const [payoutLoading, setPayoutLoading] = useState(false);
+  const [sellerName, setSellerName] = useState<string | null>(null);
+  const [sellerRecordId, setSellerRecordId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [eventPickerOpen, setEventPickerOpen] = useState(false);
 
-  // Load payout information when event or items change
+  const {
+    items: eventItems,
+    loading: itemsLoading,
+    refetch: refetchEventItems,
+    removeItemFromList: removeEventItemFromList,
+  } = useItemsByEvent(sellerRecordId, selectedEventId);
+
+  // Deep link / redirect after add-item: ?eventId=
   useEffect(() => {
-    if (currentEvent && user?.id) {
-      loadPayoutInfo();
-    }
-  }, [currentEvent?.id, stats.soldItems]);
+    if (!eventIdParam || typeof eventIdParam !== 'string') return;
+    setSelectedEventId(eventIdParam);
+  }, [eventIdParam]);
 
-  const loadPayoutInfo = async () => {
-    if (!currentEvent || !user?.id) return;
-    
-    setPayoutLoading(true);
-    try {
-      if (currentEvent.status === 'closed' || stats.soldItems > 0) {
-        // Get final payout
-        const final = await getFinalPayout(user.id, currentEvent.id);
-        setPayoutInfo({ final });
-      } else {
-        // Get estimated payout
-        const estimated = await getEstimatedPayout(user.id, currentEvent.id);
-        setPayoutInfo({ 
-          estimated: { 
-            estimatedPayout: estimated.estimatedPayout, 
-            itemsSold: stats.forSaleItems + stats.checkedInItems 
-          } 
-        });
+  // Load seller profile to display friendly name and items (seller row id ≠ auth user id)
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let isCancelled = false;
+
+    const loadSeller = async () => {
+      try {
+        const seller = await getCurrentSeller(user.id);
+        if (!isCancelled && seller) {
+          const fullName = `${seller.firstName} ${seller.lastName}`.trim();
+          setSellerName(fullName || null);
+          setSellerRecordId(seller.id);
+        }
+      } catch (error) {
+        console.warn('Failed to load seller profile for dashboard header:', error);
       }
-    } catch (error) {
-      console.error('Error loading payout info:', error);
-    } finally {
-      setPayoutLoading(false);
-    }
-  };
+    };
+
+    loadSeller();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user?.id]);
+
+  // Auto-select the next upcoming event once events load
+  useEffect(() => {
+    if (!events || events.length === 0) return;
+    if (selectedEventId) return;
+
+    const today = new Date();
+    const upcoming = events.find((event) => event.eventDate >= today);
+    const fallback = events[0];
+    setSelectedEventId((upcoming || fallback).id);
+  }, [events, selectedEventId]);
+
+  const selectedEvent = events.find((event) => event.id === selectedEventId) || null;
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([
-      refetchItems(),
-      refetchStats(),
-      refetchEvent(),
-    ]);
+    await Promise.all([refetchEvents(), refetchEventItems()]);
     setRefreshing(false);
   };
 
-  const loading = authLoading || itemsLoading || statsLoading || eventLoading || transactionsLoading;
+  const handleDeletePendingItem = (itemId: string) => {
+    confirmAction({
+      title: 'Remove this item?',
+      message:
+        'You can remove it before you hand it in at the event. This cannot be undone.',
+      confirmText: 'Remove',
+      destructive: true,
+      errorTitle: 'Could not remove',
+      onConfirm: async () => {
+        await deleteSellerPendingItem(itemId);
+        removeEventItemFromList(itemId);
+        await refetchEventItems();
+      },
+    });
+  };
+
+  const loading = authLoading || eventsLoading;
 
   if (loading && !refreshing) {
     return (
@@ -70,13 +163,6 @@ export default function DashboardScreen() {
       </View>
     );
   }
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount);
-  };
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
@@ -95,56 +181,6 @@ export default function DashboardScreen() {
     }).format(date);
   };
 
-  // Determine context-dependent CTA
-  const getPrimaryAction = () => {
-    if (!currentEvent) {
-      return { label: 'Browse Events', action: () => router.push('/(tabs)/events') };
-    }
-
-    if (currentEvent.status === 'registration') {
-      return { label: 'Add Items', action: () => router.push(`/event/${currentEvent.id}/add-item`) };
-    }
-
-    if (currentEvent.status === 'checkin') {
-      return { label: 'Show My QR Code', action: () => router.push('/qr-code') };
-    }
-
-    if (stats.soldItems > 0) {
-      return { label: 'View Sold Items', action: () => router.push('/(tabs)/items?filter=sold') };
-    }
-
-    if (currentEvent.status === 'closed') {
-      return { label: 'View Event Summary', action: () => router.push(`/event/${currentEvent.id}`) };
-    }
-
-    return { label: 'View My Items', action: () => router.push('/(tabs)/items') };
-  };
-
-  const primaryAction = getPrimaryAction();
-
-  // Get timing notes for event
-  const getTimingNotes = () => {
-    if (!currentEvent) return [];
-    const notes: string[] = [];
-
-    if (currentEvent.priceDropTime) {
-      const now = new Date();
-      if (currentEvent.priceDropTime > now) {
-        notes.push(`Price drop: ${formatDateTime(currentEvent.priceDropTime)}`);
-      }
-    }
-
-    if (currentEvent.status === 'pickup') {
-      notes.push('Pickup window is open');
-    } else if (currentEvent.status === 'shopping') {
-      notes.push('Event is in progress');
-    }
-
-    return notes;
-  };
-
-  const timingNotes = getTimingNotes();
-
   return (
     <ScrollView
       style={styles.container}
@@ -153,169 +189,276 @@ export default function DashboardScreen() {
       }
     >
       <View style={styles.header}>
-        <Text style={styles.title}>Seller Dashboard</Text>
-        <Text style={styles.subtitle}>Your gear swap overview</Text>
+        {sellerName && (
+          <Text style={styles.welcomeText}>Welcome, {sellerName}</Text>
+        )}
+        <Text style={styles.title}>Event View</Text>
+        <View
+          style={[
+            styles.eventDropdownShell,
+            events.length === 0 && styles.eventDropdownShellDisabled,
+          ]}
+        >
+          <TouchableOpacity
+            style={styles.eventSelector}
+            onPress={() => setEventPickerOpen((open) => !open)}
+            disabled={events.length === 0}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.eventSelectorLabel}>Current Event</Text>
+            <View style={styles.eventSelectorRow}>
+              <Text style={styles.eventSelectorValue} numberOfLines={2}>
+                {selectedEvent
+                  ? selectedEvent.name
+                  : events.length === 0
+                    ? 'No events available'
+                    : 'Select an event'}
+              </Text>
+              <Text style={styles.eventSelectorIcon}>{eventPickerOpen ? '▲' : '▼'}</Text>
+            </View>
+          </TouchableOpacity>
+          {eventPickerOpen && events.length > 0 && (
+            <View style={styles.eventPickerList}>
+              {events.map((event, index) => (
+                <TouchableOpacity
+                  key={event.id}
+                  style={[
+                    styles.eventPickerItem,
+                    index === events.length - 1 && styles.eventPickerItemLast,
+                    event.id === selectedEventId && styles.eventPickerItemSelected,
+                  ]}
+                  onPress={() => {
+                    setSelectedEventId(event.id);
+                    setEventPickerOpen(false);
+                  }}
+                >
+                  <Text style={styles.eventPickerItemName}>{event.name}</Text>
+                  <Text style={styles.eventPickerItemDate}>{formatDate(event.eventDate)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
       </View>
 
-      {/* Current/Next Event */}
-      {currentEvent && (
+      {selectedEvent && (
         <View style={styles.section}>
           <View style={styles.eventCard}>
-            <View style={styles.eventHeader}>
-              <View style={styles.eventHeaderLeft}>
-                <Text style={styles.eventName}>{currentEvent.name}</Text>
-                <Text style={styles.eventDate}>{formatDate(currentEvent.eventDate)}</Text>
-              </View>
-              <View style={[styles.eventStatusBadge, getEventStatusBadgeStyle(currentEvent.status)]}>
-                <Text style={styles.eventStatusText}>{formatEventStatus(currentEvent.status)}</Text>
-              </View>
-            </View>
-            {timingNotes.length > 0 && (
-              <View style={styles.timingNotes}>
-                {timingNotes.map((note, index) => (
-                  <Text key={index} style={styles.timingNote}>{note}</Text>
-                ))}
-              </View>
+            <Text style={styles.eventInfoLabel}>Date</Text>
+            <Text style={styles.eventInfoValue}>{formatDate(selectedEvent.eventDate)}</Text>
+            {selectedEvent.shopOpenTime != null && (
+              <>
+                <Text style={styles.eventInfoLabel}>Event starts</Text>
+                <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopOpenTime)}</Text>
+              </>
+            )}
+            {selectedEvent.shopCloseTime != null && (
+              <>
+                <Text style={styles.eventInfoLabel}>Event ends</Text>
+                <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopCloseTime)}</Text>
+              </>
+            )}
+            {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null || (selectedEvent.gearDropOffPlace != null && selectedEvent.gearDropOffPlace.trim() !== '')) && (
+              <>
+                <Text style={styles.eventInfoLabel}>Gear drop-off</Text>
+                <Text style={styles.eventInfoValue}>
+                  {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null)
+                    ? `${selectedEvent.gearDropOffStartTime != null ? formatDateTime(selectedEvent.gearDropOffStartTime) : '—'} – ${selectedEvent.gearDropOffEndTime != null ? formatDateTime(selectedEvent.gearDropOffEndTime) : '—'}`
+                    : ''}
+                  {selectedEvent.gearDropOffPlace?.trim() ? (selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null ? ` · ${selectedEvent.gearDropOffPlace.trim()}` : selectedEvent.gearDropOffPlace.trim()) : ''}
+                </Text>
+              </>
+            )}
+            {(selectedEvent.pickupStartTime != null || selectedEvent.pickupEndTime != null) ? (
+              <>
+                <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
+                <Text style={styles.eventInfoValue}>
+                  {selectedEvent.pickupStartTime != null ? formatDateTime(selectedEvent.pickupStartTime) : '—'}
+                  {' – '}
+                  {selectedEvent.pickupEndTime != null ? formatDateTime(selectedEvent.pickupEndTime) : '—'}
+                </Text>
+              </>
+            ) : selectedEvent.shopCloseTime != null && (
+              <>
+                <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
+                <Text style={styles.eventInfoValue}>After {formatDateTime(selectedEvent.shopCloseTime)}</Text>
+              </>
             )}
           </View>
         </View>
       )}
 
-      {/* Earnings Summary */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Earnings Summary</Text>
-        <View style={styles.earningsCard}>
-          {payoutLoading ? (
-            <ActivityIndicator size="small" color="#007AFF" />
-          ) : payoutInfo?.final ? (
-            <>
-              <Text style={styles.earningsLabel}>Final Payout</Text>
-              <Text style={styles.earningsAmount}>{formatCurrency(payoutInfo.final.totalPayout)}</Text>
-              <Text style={styles.earningsSubtext}>
-                {payoutInfo.final.itemsSold} {payoutInfo.final.itemsSold === 1 ? 'item' : 'items'} sold
-              </Text>
-            </>
-          ) : payoutInfo?.estimated ? (
-            <>
-              <Text style={styles.earningsLabel}>Estimated Payout</Text>
-              <Text style={styles.earningsAmount}>{formatCurrency(payoutInfo.estimated.estimatedPayout)}</Text>
-              <Text style={styles.earningsSubtext}>
-                Based on {payoutInfo.estimated.itemsSold} {payoutInfo.estimated.itemsSold === 1 ? 'item' : 'items'} for sale
-              </Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.earningsLabel}>Items Sold</Text>
-              <Text style={styles.earningsAmount}>{stats.soldItems}</Text>
-              <Text style={styles.earningsSubtext}>
-                {stats.soldItems === 0 ? 'No items sold yet' : 'Total items sold'}
-              </Text>
-            </>
-          )}
-        </View>
-      </View>
-
-      {/* Item Status Snapshot */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Item Status</Text>
-        <View style={styles.statusGrid}>
-          <View style={styles.statusItem}>
-            <Text style={styles.statusCount}>{stats.pendingItems}</Text>
-            <Text style={styles.statusLabel}>Pending</Text>
-          </View>
-          <View style={styles.statusItem}>
-            <Text style={styles.statusCount}>{stats.checkedInItems}</Text>
-            <Text style={styles.statusLabel}>Checked In</Text>
-          </View>
-          <View style={styles.statusItem}>
-            <Text style={styles.statusCount}>{stats.forSaleItems}</Text>
-            <Text style={styles.statusLabel}>For Sale</Text>
-          </View>
-          <View style={styles.statusItem}>
-            <Text style={[styles.statusCount, styles.soldCount]}>{stats.soldItems}</Text>
-            <Text style={styles.statusLabel}>Sold</Text>
-          </View>
-          {stats.donatedItems > 0 && (
-            <View style={styles.statusItem}>
-              <Text style={styles.statusCount}>{stats.donatedItems}</Text>
-              <Text style={styles.statusLabel}>Donated</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Recent Activity (Notifications) */}
-      {transactions.length > 0 && (
+      {selectedEvent && sellerRecordId && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          {transactions.map((transaction) => (
-            <View key={transaction.id} style={styles.activityCard}>
-              <View style={styles.activityIcon}>
-                <Text style={styles.activityIconText}>💰</Text>
-              </View>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>Item Sold</Text>
-                <Text style={styles.activityDescription}>
-                  You earned {formatCurrency(transaction.sellerAmount)}
-                </Text>
-                <Text style={styles.activityTime}>
-                  {formatDateTime(transaction.soldAt)}
-                </Text>
+          <Text style={styles.sectionTitle}>Your items for this event</Text>
+          {itemsLoading && !refreshing ? (
+            <View style={styles.itemsCard}>
+              <View style={styles.itemsLoadingRow}>
+                <ActivityIndicator size="small" color="#007AFF" />
+                <Text style={styles.itemsLoadingText}>Loading your items…</Text>
               </View>
             </View>
-          ))}
+          ) : eventItems.length === 0 ? (
+            <View style={styles.itemsCard}>
+              <Text style={styles.itemsEmptyText}>
+                No items yet for this event. Pre-register an item below to see it listed here.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.itemsListContainer}>
+              {eventItems.map((item) => (
+                <ItemSummaryRow
+                  key={item.id}
+                  item={item}
+                  organization={selectedEvent.organization}
+                  formatDate={formatDate}
+                  onDeletePending={
+                    item.status === 'pending' ? () => handleDeletePendingItem(item.id) : undefined
+                  }
+                  onEditPending={
+                    item.status === 'pending' && selectedEvent
+                      ? () =>
+                          router.push(
+                            `/event/${selectedEvent.id}/add-item?itemId=${encodeURIComponent(item.id)}`
+                          )
+                      : undefined
+                  }
+                />
+              ))}
+            </View>
+          )}
         </View>
       )}
 
-      {/* Primary Action Button */}
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Pre-register an item to sell</Text>
+        <Text style={styles.registerItemHint}>
+          Choose the item type from the event&apos;s list and fill out the form. That pre-registers your item; it is fully in the sale only after staff check it in.
+        </Text>
         <TouchableOpacity
-          style={styles.primaryActionButton}
-          onPress={primaryAction.action}
+          style={[styles.registerItemButton, !selectedEvent && styles.registerItemButtonDisabled]}
+          onPress={() => {
+            if (selectedEvent) router.push(`/event/${selectedEvent.id}/add-item`);
+          }}
+          disabled={!selectedEvent}
+          activeOpacity={0.8}
         >
-          <Text style={styles.primaryActionText}>{primaryAction.label}</Text>
+          <Text style={styles.registerItemPlus}>+</Text>
+          <Text style={styles.registerItemLabel}>Pre-register new item</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Empty State */}
-      {!currentEvent && items.length === 0 && (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>Get Started</Text>
-          <Text style={styles.emptyStateSubtext}>
-            Browse events and add items to start selling
-          </Text>
-          <TouchableOpacity
-            style={styles.emptyStateButton}
-            onPress={() => router.push('/(tabs)/events')}
-          >
-            <Text style={styles.emptyStateButtonText}>Browse Events</Text>
-          </TouchableOpacity>
-        </View>
-      )}
     </ScrollView>
   );
 }
 
-function formatEventStatus(status: string): string {
-  const statusMap: Record<string, string> = {
-    registration: 'Registration Open',
-    checkin: 'Check-in',
-    shopping: 'Shopping',
-    pickup: 'Pickup',
-    closed: 'Closed',
-  };
-  return statusMap[status] || status;
-}
+function ItemSummaryRow({
+  item,
+  organization,
+  formatDate,
+  onDeletePending,
+  onEditPending,
+}: {
+  item: Item;
+  organization?: Organization | null;
+  formatDate: (d: Date) => string;
+  /** Shown only for `pending` items — remove before hand-in */
+  onDeletePending?: () => void;
+  /** Shown only for `pending` items — edit before hand-in */
+  onEditPending?: () => void;
+}) {
+  const desc =
+    item.description?.trim() ||
+    (typeof item.customFields?.description === 'string' ? item.customFields.description : '') ||
+    '—';
+  const commissionRate = organization?.commissionRate ?? null;
+  const basisPrice =
+    item.status === 'sold' && item.soldPrice != null && !Number.isNaN(Number(item.soldPrice))
+      ? Number(item.soldPrice)
+      : typeof item.originalPrice === 'number' && !Number.isNaN(item.originalPrice)
+        ? item.originalPrice
+        : null;
+  const priceLabel = item.status === 'sold' ? 'Sold for' : 'Your price';
+  const shareLabel = item.status === 'sold' ? 'Your share (after commission)' : 'Est. your share';
+  const share =
+    basisPrice != null ? estimatedSellerProceeds(basisPrice, commissionRate) : null;
+  const priceStr = basisPrice != null ? `$${basisPrice.toFixed(2)}` : '—';
+  const shareStr = share != null ? `$${share.toFixed(2)}` : '—';
+  const commissionPct =
+    commissionRate != null && commissionRate > 0 ? Math.round(commissionRate * 1000) / 10 : null;
 
-function getEventStatusBadgeStyle(status: string) {
-  const styles: Record<string, { backgroundColor: string }> = {
-    registration: { backgroundColor: '#4A90E2' },
-    checkin: { backgroundColor: '#FFA500' },
-    shopping: { backgroundColor: '#50C878' },
-    pickup: { backgroundColor: '#9B59B6' },
-    closed: { backgroundColor: '#6C757D' },
-  };
-  return styles[status] || { backgroundColor: '#6C757D' };
+  const displayTitle = getSellerFacingItemTitle(item);
+  const showTagSubtitle = displayTitle !== item.itemNumber;
+
+  return (
+    <View style={styles.itemRowCard}>
+      <View style={styles.itemRowHeader}>
+        <View style={styles.itemTitleBlock}>
+          <Text style={styles.itemTitle} numberOfLines={2}>
+            {displayTitle}
+          </Text>
+          {showTagSubtitle ? (
+            <Text style={styles.itemTagId} numberOfLines={1}>
+              Tag # {item.itemNumber}
+            </Text>
+          ) : null}
+        </View>
+        <View style={[styles.statusPill, statusBadgeStyle(item.status)]}>
+          <Text style={styles.statusPillText}>{formatSellerItemStatusLabel(item.status)}</Text>
+        </View>
+      </View>
+      <Text style={styles.itemDescription} numberOfLines={2}>
+        {desc}
+      </Text>
+      <View style={styles.itemPriceBlock}>
+        <Text style={styles.itemPriceLine}>
+          <Text style={styles.itemPriceLabel}>{priceLabel}: </Text>
+          <Text style={styles.itemPriceValue}>{priceStr}</Text>
+        </Text>
+        <Text style={styles.itemPriceLine}>
+          <Text style={styles.itemPriceLabel}>{shareLabel}: </Text>
+          <Text style={styles.itemShareValue}>{shareStr}</Text>
+        </Text>
+        {commissionPct != null && commissionPct > 0 ? (
+          <Text style={styles.itemCommissionNote}>
+            Org commission: {commissionPct}% (same rule as when an item sells)
+          </Text>
+        ) : commissionRate != null && commissionRate === 0 ? (
+          <Text style={styles.itemCommissionNote}>
+            No org commission on this event — estimate equals the full price.
+          </Text>
+        ) : (
+          <Text style={styles.itemCommissionNote}>
+            Commission rate not set for this event — estimate assumes no fee.
+          </Text>
+        )}
+      </View>
+      <StaffItemQrSection
+        qrCode={item.qrCode}
+        itemNumber={item.itemNumber}
+        show={item.status === 'pending'}
+      />
+      <View style={styles.itemMetaRow}>
+        {item.category?.trim() ? (
+          <Text style={styles.itemMeta}>Category: {item.category}</Text>
+        ) : null}
+      </View>
+      <View style={styles.itemFooterRow}>
+        <Text style={styles.itemMetaMuted}>Added {formatDate(item.createdAt)}</Text>
+        <View style={styles.itemFooterActions}>
+          {onEditPending ? (
+            <TouchableOpacity onPress={onEditPending} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.itemEditLink}>Edit</Text>
+            </TouchableOpacity>
+          ) : null}
+          {onDeletePending ? (
+            <TouchableOpacity onPress={onDeletePending} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.itemRemoveLink}>Remove</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -337,6 +480,12 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 40,
     backgroundColor: '#FFFFFF',
+  },
+  welcomeText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: 4,
   },
   title: {
     fontSize: 32,
@@ -388,6 +537,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
+  eventInfoLabel: {
+    fontSize: 12,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 12,
+    marginBottom: 2,
+  },
+  eventInfoValue: {
+    fontSize: 16,
+    color: '#1A1A1A',
+  },
   eventStatusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -409,6 +570,251 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
     marginBottom: 4,
+  },
+  eventDropdownShell: {
+    marginTop: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  eventDropdownShellDisabled: {
+    opacity: 0.75,
+  },
+  eventSelector: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  eventSelectorLabel: {
+    fontSize: 13,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  eventSelectorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  eventSelectorValue: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1A1A1A',
+  },
+  eventSelectorIcon: {
+    fontSize: 16,
+    color: '#666',
+    marginLeft: 8,
+  },
+  eventPickerList: {
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5E5',
+    paddingVertical: 4,
+  },
+  eventPickerItem: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  eventPickerItemLast: {
+    borderBottomWidth: 0,
+  },
+  eventPickerItemSelected: {
+    backgroundColor: '#F0F8FF',
+  },
+  eventPickerItemName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1A1A1A',
+  },
+  eventPickerItemDate: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 2,
+  },
+  registerItemHint: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  registerItemButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 16,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  registerItemButtonDisabled: {
+    backgroundColor: '#B0BEC5',
+    opacity: 0.9,
+  },
+  registerItemPlus: {
+    fontSize: 40,
+    fontWeight: '300',
+    color: '#FFFFFF',
+    lineHeight: 44,
+  },
+  registerItemLabel: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  itemsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  itemsLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+  },
+  itemsLoadingText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  itemsEmptyText: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  itemsListContainer: {
+    gap: 12,
+  },
+  itemRowCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E6EA',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.07,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  itemRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  itemTitleBlock: {
+    flex: 1,
+    marginRight: 8,
+  },
+  itemTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  itemTagId: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  itemPriceBlock: {
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  itemPriceLine: {
+    fontSize: 14,
+    marginBottom: 2,
+  },
+  itemPriceLabel: {
+    color: '#555',
+    fontWeight: '500',
+  },
+  itemPriceValue: {
+    color: '#1A1A1A',
+    fontWeight: '600',
+  },
+  itemShareValue: {
+    color: '#1B5E20',
+    fontWeight: '700',
+  },
+  itemCommissionNote: {
+    fontSize: 11,
+    color: '#888',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  statusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  itemDescription: {
+    fontSize: 14,
+    color: '#444',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  itemMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 4,
+  },
+  itemMeta: {
+    fontSize: 13,
+    color: '#555',
+  },
+  itemMetaMuted: {
+    fontSize: 12,
+    color: '#999',
+    flex: 1,
+  },
+  itemFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  itemFooterActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  itemEditLink: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  itemRemoveLink: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#DC3545',
   },
   earningsCard: {
     backgroundColor: '#FFFFFF',

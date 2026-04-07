@@ -24,20 +24,29 @@
   },
   "scripts": {
     "start": "yarn workspace seller-app start",
+    "dev:both": "concurrently -n organizer,seller -c cyan,magenta \"yarn workspace organizer-app start -- --port 8081\" \"yarn workspace seller-app start -- --port 8082\"",
     "seller:start": "yarn workspace seller-app start",
+    "seller:start:8082": "yarn workspace seller-app start -- --port 8082",
     "seller:ios": "yarn workspace seller-app ios",
     "seller:android": "yarn workspace seller-app android",
-    "organizer:start": "yarn workspace organizer-app start",
+    "seller:web": "yarn workspace seller-app web",
+    "org:start": "yarn workspace organizer-app start",
     "organizer:ios": "yarn workspace organizer-app ios",
     "organizer:android": "yarn workspace organizer-app android",
+    "organizer:web": "yarn workspace organizer-app web",
     "shared:build": "yarn workspace shared build",
     "type-check": "yarn workspaces run type-check"
   },
   "devDependencies": {
+    "concurrently": "^9.1.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=20.19.0",
     "yarn": ">=1.22.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.93.1"
   }
 }

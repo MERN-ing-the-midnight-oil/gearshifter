@@ -7,9 +7,7 @@
 # project_id = "your-project-ref"
 
 [auth]
-# Enable phone auth for sellers
-enable_phone_signup = true
-enable_phone_confirmation = true
+# Phone auth settings are configured in Supabase dashboard
 
 [api]
 # API settings

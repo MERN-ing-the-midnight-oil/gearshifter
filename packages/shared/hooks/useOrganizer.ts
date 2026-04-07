@@ -16,17 +16,28 @@ export function useAdminOrganization(adminUserId: string | null) {
   }, [adminUserId]);
 
   const loadOrganization = async () => {
-    if (!adminUserId) return;
+    if (!adminUserId) {
+      console.log('[useAdminOrganization] No adminUserId provided');
+      return;
+    }
     
+    console.log('[useAdminOrganization] Loading organization for user:', adminUserId);
     try {
       setLoading(true);
       setError(null);
+      console.log('[useAdminOrganization] Calling getAdminOrganization...');
       const data = await getAdminOrganization(adminUserId);
+      console.log('[useAdminOrganization] getAdminOrganization returned:', data);
       setOrganization(data);
+      if (!data) {
+        console.warn('[useAdminOrganization] No organization found for user:', adminUserId);
+      }
     } catch (err) {
+      console.error('[useAdminOrganization] Error loading organization:', err);
       setError(err instanceof Error ? err : new Error('Failed to load organization'));
     } finally {
       setLoading(false);
+      console.log('[useAdminOrganization] Loading complete');
     }
   };
 

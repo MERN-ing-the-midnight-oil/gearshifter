@@ -1,0 +1,9 @@
+   yarn seller:start  
+   yarn org:start  
+yarn dev:both
+
+Organizer → Metro/dev server on http://localhost:8081
+Seller → Metro/dev server on http://localhost:8082
+
+Going forward: for this linked project you can run:
+supabase db push

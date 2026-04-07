@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getSellerItems, getSellerItemsByEvent, getSellerStats } from '../api/items';
 import type { Item } from '../types/models';
 
@@ -6,9 +6,11 @@ export function useItems(sellerId: string | null) {
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const fetchGenRef = useRef(0);
 
   useEffect(() => {
     if (!sellerId) {
+      fetchGenRef.current += 1;
       setLoading(false);
       return;
     }
@@ -18,29 +20,41 @@ export function useItems(sellerId: string | null) {
 
   const loadItems = async () => {
     if (!sellerId) return;
-    
+    const gen = ++fetchGenRef.current;
+
     try {
       setLoading(true);
       setError(null);
       const data = await getSellerItems(sellerId);
+      if (gen !== fetchGenRef.current) return;
       setItems(data);
     } catch (err) {
+      if (gen !== fetchGenRef.current) return;
       setError(err instanceof Error ? err : new Error('Failed to load items'));
     } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  return { items, loading, error, refetch: loadItems };
+  const removeItemFromList = useCallback((itemId: string) => {
+    fetchGenRef.current += 1;
+    setItems((prev) => prev.filter((i) => i.id !== itemId));
+  }, []);
+
+  return { items, loading, error, refetch: loadItems, removeItemFromList };
 }
 
 export function useItemsByEvent(sellerId: string | null, eventId: string | null) {
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const fetchGenRef = useRef(0);
 
   useEffect(() => {
     if (!sellerId || !eventId) {
+      fetchGenRef.current += 1;
       setLoading(false);
       return;
     }
@@ -50,20 +64,30 @@ export function useItemsByEvent(sellerId: string | null, eventId: string | null)
 
   const loadItems = async () => {
     if (!sellerId || !eventId) return;
-    
+    const gen = ++fetchGenRef.current;
+
     try {
       setLoading(true);
       setError(null);
       const data = await getSellerItemsByEvent(sellerId, eventId);
+      if (gen !== fetchGenRef.current) return;
       setItems(data);
     } catch (err) {
+      if (gen !== fetchGenRef.current) return;
       setError(err instanceof Error ? err : new Error('Failed to load items'));
     } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  return { items, loading, error, refetch: loadItems };
+  const removeItemFromList = useCallback((itemId: string) => {
+    fetchGenRef.current += 1;
+    setItems((prev) => prev.filter((i) => i.id !== itemId));
+  }, []);
+
+  return { items, loading, error, refetch: loadItems, removeItemFromList };
 }
 
 export function useSellerStats(sellerId: string | null) {

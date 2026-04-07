@@ -95,24 +95,60 @@ export default function EventDetailScreen() {
             <Text style={styles.detailLabel}>Date</Text>
             <Text style={styles.detailValue}>{formatDate(event.eventDate)}</Text>
           </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Shop Hours</Text>
-            <Text style={styles.detailValue}>
-              {formatDateTime(event.shopOpenTime)} - {formatDateTime(event.shopCloseTime)}
-            </Text>
-          </View>
+          {event.shopOpenTime != null && (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Event starts</Text>
+              <Text style={styles.detailValue}>{formatDateTime(event.shopOpenTime)}</Text>
+            </View>
+          )}
+          {event.shopCloseTime != null && (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Event ends</Text>
+              <Text style={styles.detailValue}>{formatDateTime(event.shopCloseTime)}</Text>
+            </View>
+          )}
+          {(event.gearDropOffStartTime != null || event.gearDropOffEndTime != null || (event.gearDropOffPlace != null && event.gearDropOffPlace.trim() !== '')) && (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Gear drop-off</Text>
+              <Text style={styles.detailValue}>
+                {(event.gearDropOffStartTime != null || event.gearDropOffEndTime != null)
+                  ? `${event.gearDropOffStartTime != null ? formatDateTime(event.gearDropOffStartTime) : '—'} – ${event.gearDropOffEndTime != null ? formatDateTime(event.gearDropOffEndTime) : '—'}`
+                  : ''}
+                {event.gearDropOffPlace?.trim() ? (event.gearDropOffStartTime != null || event.gearDropOffEndTime != null ? ` · ${event.gearDropOffPlace.trim()}` : event.gearDropOffPlace.trim()) : ''}
+              </Text>
+            </View>
+          )}
+          {(event.pickupStartTime != null || event.pickupEndTime != null) ? (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Seller pickup (unsold equipment)</Text>
+              <Text style={styles.detailValue}>
+                {event.pickupStartTime != null ? formatDateTime(event.pickupStartTime) : '—'}
+                {' – '}
+                {event.pickupEndTime != null ? formatDateTime(event.pickupEndTime) : '—'}
+              </Text>
+            </View>
+          ) : event.shopCloseTime != null && (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Seller pickup (unsold equipment)</Text>
+              <Text style={styles.detailValue}>After {formatDateTime(event.shopCloseTime)}</Text>
+            </View>
+          )}
           {event.organization && (
             <>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Commission Rate</Text>
                 <Text style={styles.detailValue}>
-                  {Math.round(event.organization.commissionRate * 100)}%
+                  {event.organization.commissionRate != null
+                    ? `${Math.round(event.organization.commissionRate * 100)}%`
+                    : 'No commission'}
                 </Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Vendor Commission</Text>
                 <Text style={styles.detailValue}>
-                  {Math.round(event.organization.vendorCommissionRate * 100)}%
+                  {event.organization.vendorCommissionRate != null
+                    ? `${Math.round(event.organization.vendorCommissionRate * 100)}%`
+                    : 'Not set'}
                 </Text>
               </View>
             </>
@@ -158,9 +194,15 @@ export default function EventDetailScreen() {
           <View style={styles.actionSection}>
             <TouchableOpacity
               style={styles.primaryButton}
+              onPress={() => router.push(`/event/${event.id}/register`)}
+            >
+              <Text style={styles.primaryButtonText}>Register for This Event</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
               onPress={() => router.push(`/event/${event.id}/add-item`)}
             >
-              <Text style={styles.primaryButtonText}>Add Items to This Event</Text>
+              <Text style={styles.secondaryButtonText}>Pre-register items</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -273,6 +315,7 @@ const styles = StyleSheet.create({
   },
   actionSection: {
     marginTop: 8,
+    gap: 12,
   },
   primaryButton: {
     backgroundColor: '#007AFF',
@@ -287,6 +330,24 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  secondaryButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 18,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  secondaryButtonText: {
+    color: '#007AFF',
     fontSize: 18,
     fontWeight: '600',
   },

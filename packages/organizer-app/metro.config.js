@@ -26,6 +26,4 @@ config.resolver.extraNodeModules = {
 config.resolver.disableHierarchicalLookup = false;
 
 // 5. Enable package exports (for newer Expo packages)
-config.resolver.unstable_enablePackageExports = true;
-
-module.exports = config;
+config.resolver.unstable_enablePackageExports = true;module.exports = config;

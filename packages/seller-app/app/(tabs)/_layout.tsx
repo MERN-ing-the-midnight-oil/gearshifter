@@ -1,44 +1,53 @@
-import { Tabs } from 'expo-router';
+import { Stack } from 'expo-router';
+import { theme } from '../../lib/theme';
 
-export default function TabsLayout() {
+export default function AppStackLayout() {
   return (
-    <Tabs>
-      <Tabs.Screen
+    <Stack
+      screenOptions={{
+        headerStyle: {
+          backgroundColor: theme.surface,
+        },
+        headerTintColor: theme.text,
+        headerTitleStyle: {
+          color: theme.text,
+        },
+        contentStyle: {
+          backgroundColor: theme.background,
+        },
+      }}
+    >
+      <Stack.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarLabel: 'Home',
+          title: 'Seller Event View',
+          headerShown: false,
         }}
       />
-      <Tabs.Screen
+      <Stack.Screen
         name="events"
         options={{
           title: 'Events',
-          tabBarLabel: 'Events',
         }}
       />
-      <Tabs.Screen
+      <Stack.Screen
         name="items"
         options={{
           title: 'My Items',
-          tabBarLabel: 'Items',
         }}
       />
-      <Tabs.Screen
+      <Stack.Screen
         name="notifications"
         options={{
           title: 'Notifications',
-          tabBarLabel: 'Notifications',
         }}
       />
-      <Tabs.Screen
+      <Stack.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarLabel: 'Profile',
         }}
       />
-    </Tabs>
+    </Stack>
   );
 }
-

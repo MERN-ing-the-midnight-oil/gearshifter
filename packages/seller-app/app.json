@@ -25,7 +25,15 @@
     },
     "scheme": "seller",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#2D5A43",
+          "defaultChannel": "sales"
+        }
+      ]
     ],
     "extra": {
       "router": {

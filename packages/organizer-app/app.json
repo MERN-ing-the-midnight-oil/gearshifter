@@ -11,14 +11,25 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.gearswap.organizer"
+      "bundleIdentifier": "com.gearswap.organizer",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app needs Bluetooth access to connect to thermal printers for printing item tags.",
+        "NSBluetoothPeripheralUsageDescription": "This app needs Bluetooth access to connect to thermal printers for printing item tags."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.gearswap.organizer"
+      "package": "com.gearswap.organizer",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getEvents, getUpcomingEvents, getEvent, type EventWithOrganization } from '../api/events';
+import { getEvents, getUpcomingEvents, getEvent, getCurrentEventForSeller, type EventWithOrganization } from '../api/events';
 import type { Event } from '../types/models';
 
 export function useEvents() {
@@ -33,19 +33,25 @@ export function useUpcomingEvents() {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    console.log('[useUpcomingEvents] Hook initialized, loading events...');
     loadEvents();
   }, []);
 
   const loadEvents = async () => {
     try {
+      console.log('[useUpcomingEvents] Starting to load events...');
       setLoading(true);
       setError(null);
       const data = await getUpcomingEvents();
+      console.log('[useUpcomingEvents] Received events:', data);
       setEvents(data);
+      console.log('[useUpcomingEvents] Events set, count:', data.length);
     } catch (err) {
+      console.error('[useUpcomingEvents] Error loading events:', err);
       setError(err instanceof Error ? err : new Error('Failed to load upcoming events'));
     } finally {
       setLoading(false);
+      console.log('[useUpcomingEvents] Loading complete');
     }
   };
 
@@ -104,7 +110,6 @@ export function useCurrentEvent(sellerId: string | null) {
     try {
       setLoading(true);
       setError(null);
-      const { getCurrentEventForSeller } = await import('../api/events');
       const data = await getCurrentEventForSeller(sellerId);
       setEvent(data);
     } catch (err) {
