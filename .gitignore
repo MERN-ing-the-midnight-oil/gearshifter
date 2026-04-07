@@ -73,3 +73,6 @@ packages/*/app/**/*.js
 .temp
 
 .supabase_service_role_key
+
+# Local / personal notes (not committed)
+/command lines cheat sheet
