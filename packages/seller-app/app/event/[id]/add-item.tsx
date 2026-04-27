@@ -17,7 +17,10 @@ import {
   getCurrentSeller,
   updateItem,
   getEventFieldDefinitions,
-  getOrganizationCategories,
+  getEventItemCategoryTree,
+  getSellerSwapRegistration,
+  filterItemCategoriesBySellerPlan,
+  PLANNED_ITEM_CATEGORY_IDS_KEY,
   isUuidString,
   type ItemFieldDefinition,
   type ItemCategory,
@@ -51,11 +54,19 @@ export default function AddItemScreen() {
   }, [itemIdParam]);
 
   useEffect(() => {
-    if (event) {
-      loadFieldDefinitions();
-      loadCategories();
+    if (!id) {
+      setLoadingFields(false);
+      return;
     }
-  }, [event]);
+    if (!event) {
+      if (!eventLoading) {
+        setLoadingFields(false);
+      }
+      return;
+    }
+    loadFieldDefinitions();
+    loadCategories();
+  }, [id, event, eventLoading, user?.id]);
 
   useEffect(() => {
     if (!itemIdParam) {
@@ -170,11 +181,21 @@ export default function AddItemScreen() {
 
   const loadCategories = async () => {
     if (!event) return;
-    
+
     try {
-      // Get organization from event
-      const orgCategories = await getOrganizationCategories(event.organizationId);
-      setCategories(orgCategories);
+      let tree = await getEventItemCategoryTree(event.id);
+      if (user?.id) {
+        const seller = await getCurrentSeller(user.id);
+        if (seller) {
+          const reg = await getSellerSwapRegistration(seller.id, event.id);
+          const raw = reg?.registrationData?.[PLANNED_ITEM_CATEGORY_IDS_KEY];
+          if (Array.isArray(raw) && raw.length > 0) {
+            const planned = new Set(raw.filter((x): x is string => typeof x === 'string'));
+            tree = filterItemCategoriesBySellerPlan(tree, planned);
+          }
+        }
+      }
+      setCategories(tree);
     } catch (error) {
       console.error('Failed to load categories:', error);
     }
@@ -626,12 +647,40 @@ export default function AddItemScreen() {
     );
   }
 
-  if (!event || !user) {
+  if (!event) {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Event not found</Text>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!user) {
+    const redirectPath =
+      itemIdParam && id
+        ? `/event/${id}/add-item?itemId=${encodeURIComponent(itemIdParam)}`
+        : `/event/${id}/add-item`;
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.signInTitle}>Sign in to list items</Text>
+        <Text style={styles.signInSubtitle}>You need a seller account to pre-register items for {event.name}.</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.push({ pathname: '/(auth)/login', params: { redirect: redirectPath } })}
+        >
+          <Text style={styles.backButtonText}>Sign in</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.backButton, styles.secondaryOutline]}
+          onPress={() => router.push({ pathname: '/(auth)/signup', params: { redirect: redirectPath } })}
+        >
+          <Text style={styles.secondaryOutlineText}>Create account</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.textLink} onPress={() => router.back()}>
+          <Text style={styles.textLinkLabel}>Go back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -889,6 +938,41 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#DC3545',
     marginBottom: 20,
+  },
+  signInTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  signInSubtitle: {
+    fontSize: 15,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 22,
+    paddingHorizontal: 8,
+  },
+  secondaryOutline: {
+    marginTop: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#007AFF',
+  },
+  secondaryOutlineText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  textLink: {
+    marginTop: 20,
+    paddingVertical: 8,
+  },
+  textLinkLabel: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: '500',
   },
   backButton: {
     backgroundColor: '#007AFF',

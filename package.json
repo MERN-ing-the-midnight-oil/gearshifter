@@ -24,7 +24,7 @@
   },
   "scripts": {
     "start": "yarn workspace seller-app start",
-    "dev:both": "concurrently -n organizer,seller -c cyan,magenta \"yarn workspace organizer-app start -- --port 8081\" \"yarn workspace seller-app start -- --port 8082\"",
+    "dev:both": "kill-port 8081 8082 && concurrently -n organizer,seller -c cyan,magenta \"EXPO_NO_DEPENDENCY_VALIDATION=1 yarn workspace organizer-app start -- --port 8081\" \"EXPO_NO_DEPENDENCY_VALIDATION=1 yarn workspace seller-app start -- --port 8082\"",
     "seller:start": "yarn workspace seller-app start",
     "seller:start:8082": "yarn workspace seller-app start -- --port 8082",
     "seller:ios": "yarn workspace seller-app ios",
@@ -35,10 +35,13 @@
     "organizer:android": "yarn workspace organizer-app android",
     "organizer:web": "yarn workspace organizer-app web",
     "shared:build": "yarn workspace shared build",
-    "type-check": "yarn workspaces run type-check"
+    "type-check": "yarn workspaces run type-check",
+    "create:axel-admin": "tsx scripts/js/create-admin-user.ts \"Axel Admin\" asdfasdf axel.admin@bellingham-skiswap.test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
+    "dotenv": "^16.4.7",
+    "kill-port": "2.0.1",
     "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   },

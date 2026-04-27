@@ -13,9 +13,9 @@ export const getSellerSwapRegistration = async (
     .select('*')
     .eq('seller_id', sellerId)
     .eq('event_id', eventId)
-    .single();
+    .maybeSingle();
 
-  if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows returned
+  if (error) throw error;
   return data ? mapRegistrationFromDb(data) : null;
 };
 

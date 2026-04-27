@@ -1,4 +1,4 @@
-import { Slot, useRouter, useSegments, usePathname } from 'expo-router';
+import { Slot, useRouter, useSegments, usePathname, useGlobalSearchParams } from 'expo-router';
 import { useEffect } from 'react';
 import { View, Pressable, Text, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +15,16 @@ export default function RootLayout() {
 
   const currentSegment = segments[0];
   const isOnAuthScreen = currentSegment === '(auth)' || pathname?.startsWith('/(auth)');
+  const searchParams = useGlobalSearchParams();
+  const signoutParam = searchParams.signout;
+  const signoutVal = Array.isArray(signoutParam) ? signoutParam[0] : signoutParam;
+  const isOnLoginRoute =
+    (segments[0] === '(auth)' && segments[1] === 'login') ||
+    (!!pathname?.includes('/(auth)/login') && !pathname?.includes('test-login')) ||
+    pathname === '/login';
+  /** Dev: `/(auth)/login?signout=1` — stay on login so the screen can sign out and show the form (otherwise logged-in users are bounced to the dashboard). */
+  const isDevLoginSignOutIntent =
+    __DEV__ && (signoutVal === '1' || signoutVal === 'true') && isOnLoginRoute;
   const showHomeButton = !!user && !isOnAuthScreen;
 
   // Password recovery: deep link / email opens app with recovery session → reset password screen
@@ -51,10 +61,10 @@ export default function RootLayout() {
       pathname?.includes('reset-password') || pathname?.includes('forgot-password');
 
     // If user is authenticated and on auth screens, redirect to dashboard (except password reset / forgot)
-    if (user && isOnAuthScreen && !onPasswordFlowScreen) {
+    if (user && isOnAuthScreen && !onPasswordFlowScreen && !isDevLoginSignOutIntent) {
       router.replace('/(dashboard)');
     }
-  }, [user, loading, segments, pathname, router, isOnAuthScreen, currentSegment]);
+  }, [user, loading, segments, pathname, router, isOnAuthScreen, currentSegment, isDevLoginSignOutIntent]);
 
   // Reserve top space when Home button is shown so headings aren't obscured
   const homeButtonTop = insets.top + 8;

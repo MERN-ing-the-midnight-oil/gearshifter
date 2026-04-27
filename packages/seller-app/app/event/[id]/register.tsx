@@ -1,83 +1,180 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Switch } from 'react-native';
-import { useEvent, useAuth, getEventSwapRegistrationFields, getEventSwapRegistrationPageSettings, getSellerSwapRegistration, saveSellerSwapRegistration, updateSeller } from 'shared';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  Switch,
+} from 'react-native';
+import {
+  useEvent,
+  useAuth,
+  getCurrentSeller,
+  getEventSwapRegistrationFields,
+  getEventSwapRegistrationPageSettings,
+  getSellerSwapRegistration,
+  saveSellerSwapRegistration,
+  updateSeller,
+  isSellerSwapRegistrationWindowOpen,
+  getEventItemCategoryTree,
+  flattenItemCategoriesForPicker,
+  PLANNED_ITEM_CATEGORY_IDS_KEY,
+  type Seller,
+  type SellerSwapRegistration,
+  type SwapRegistrationPageSettings,
+  type FieldGroup,
+  type SwapRegistrationFieldDefinition,
+} from 'shared';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState, useEffect } from 'react';
-import type { SwapRegistrationFieldDefinition } from 'shared';
+
+function resolveEventRouteId(raw: string | string[] | undefined): string | null {
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  if (Array.isArray(raw) && raw[0] && typeof raw[0] === 'string' && raw[0].trim()) return raw[0].trim();
+  return null;
+}
+
+/** Page settings group with field definitions resolved (differs from `FieldGroup.fields` which is name keys only). */
+type FieldGroupWithDefinitions = Omit<FieldGroup, 'fields'> & {
+  fields: SwapRegistrationFieldDefinition[];
+};
 
 export default function SwapRegistrationScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const { event, loading: eventLoading } = useEvent(id);
+  const { id: idParam } = useLocalSearchParams<{ id?: string | string[] }>();
+  const eventId = resolveEventRouteId(idParam);
+  const { event, loading: eventLoading } = useEvent(eventId);
   const { user } = useAuth();
   const router = useRouter();
   
   const [fieldDefinitions, setFieldDefinitions] = useState<SwapRegistrationFieldDefinition[]>([]);
-  const [pageSettings, setPageSettings] = useState<any>(null);
-  const [existingRegistration, setExistingRegistration] = useState<any>(null);
+  const [pageSettings, setPageSettings] = useState<SwapRegistrationPageSettings | null>(null);
+  const [existingRegistration, setExistingRegistration] = useState<SellerSwapRegistration | null>(null);
   const [loadingFields, setLoadingFields] = useState(true);
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [seller, setSeller] = useState<Seller | null>(null);
+  const [sellerLoading, setSellerLoading] = useState(false);
+  const [itemCategoryOptions, setItemCategoryOptions] = useState<Array<{ id: string; label: string }>>([]);
+  const [selectedItemCategoryIds, setSelectedItemCategoryIds] = useState<string[]>([]);
 
   useEffect(() => {
-    if (event && user) {
-      loadFieldDefinitions();
-      loadExistingRegistration();
+    if (!user?.id) {
+      setSeller(null);
+      setSellerLoading(false);
+      return;
     }
-  }, [event, user]);
-
-  const loadFieldDefinitions = async () => {
-    if (!event) return;
-    
-    setLoadingFields(true);
-    try {
-      const [fields, settings] = await Promise.all([
-        getEventSwapRegistrationFields(event.id),
-        getEventSwapRegistrationPageSettings(event.id),
-      ]);
-      
-      setFieldDefinitions(fields.sort((a, b) => a.displayOrder - b.displayOrder));
-      setPageSettings(settings);
-      
-      // Initialize form data with default values
-      const initialData: Record<string, unknown> = {};
-      fields.forEach((field) => {
-        if (field.defaultValue) {
-          initialData[field.name] = field.defaultValue;
-        } else if (field.fieldType === 'boolean') {
-          initialData[field.name] = false;
-        } else if (field.fieldType === 'number' || field.fieldType === 'decimal') {
-          initialData[field.name] = '';
-        } else {
-          initialData[field.name] = '';
-        }
+    let cancelled = false;
+    setSellerLoading(true);
+    getCurrentSeller(user.id)
+      .then((row) => {
+        if (!cancelled) setSeller(row ?? null);
+      })
+      .catch((err) => {
+        console.error('Failed to load seller profile:', err);
+        if (!cancelled) setSeller(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSellerLoading(false);
       });
-      setFormData(initialData);
-    } catch (error) {
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to load registration form');
-    } finally {
-      setLoadingFields(false);
-    }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
-  const loadExistingRegistration = async () => {
-    if (!event || !user) return;
-    
-    try {
-      const registration = await getSellerSwapRegistration(user.id, event.id);
-      if (registration) {
-        setExistingRegistration(registration);
-        // Merge existing data with form data
-        setFormData((prev) => ({
-          ...prev,
-          ...registration.registrationData,
-        }));
-      }
-    } catch (error) {
-      console.error('Failed to load existing registration:', error);
+  useEffect(() => {
+    if (!eventId) {
+      setLoadingFields(false);
+      return;
     }
-  };
+    if (!event) {
+      if (!eventLoading) {
+        setLoadingFields(false);
+      }
+      return;
+    }
+    if (!user) {
+      setLoadingFields(false);
+      return;
+    }
+    if (sellerLoading) {
+      return;
+    }
+    if (!seller) {
+      setLoadingFields(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadRegistrationForm = async () => {
+      setLoadingFields(true);
+      try {
+        const [fields, settings, registration, itemCatTree] = await Promise.all([
+          getEventSwapRegistrationFields(event.id),
+          getEventSwapRegistrationPageSettings(event.id),
+          getSellerSwapRegistration(seller.id, event.id),
+          getEventItemCategoryTree(event.id),
+        ]);
+        if (cancelled) return;
+
+        const sorted = [...fields].sort((a, b) => a.displayOrder - b.displayOrder);
+        setFieldDefinitions(sorted);
+        setPageSettings(settings);
+        setExistingRegistration(registration);
+        setItemCategoryOptions(flattenItemCategoriesForPicker(itemCatTree));
+
+        const initialData: Record<string, unknown> = {};
+        sorted.forEach((field) => {
+          if (field.defaultValue) {
+            initialData[field.name] = field.defaultValue;
+          } else if (field.fieldType === 'boolean') {
+            initialData[field.name] = false;
+          } else if (field.fieldType === 'number' || field.fieldType === 'decimal') {
+            initialData[field.name] = '';
+          } else {
+            initialData[field.name] = '';
+          }
+        });
+        const regData = (registration?.registrationData ?? {}) as Record<string, unknown>;
+        const rawPlan = regData[PLANNED_ITEM_CATEGORY_IDS_KEY];
+        const planned = Array.isArray(rawPlan)
+          ? rawPlan.filter((x): x is string => typeof x === 'string')
+          : [];
+        setSelectedItemCategoryIds(planned);
+        const swapFieldValues = { ...regData };
+        delete swapFieldValues[PLANNED_ITEM_CATEGORY_IDS_KEY];
+        Object.assign(initialData, swapFieldValues);
+        setFormData(initialData);
+      } catch (error) {
+        if (!cancelled) {
+          Alert.alert('Error', error instanceof Error ? error.message : 'Failed to load registration form');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingFields(false);
+        }
+      }
+    };
+
+    loadRegistrationForm();
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, event, user, eventLoading, seller, sellerLoading]);
 
   const handleSubmit = async () => {
-    if (!user || !event) return;
+    if (!user || !event || !seller) return;
+    if (event.archivedAt) {
+      Alert.alert('Unavailable', 'This event is archived and registration cannot be changed.');
+      return;
+    }
+    if (!isSellerSwapRegistrationWindowOpen(event) && !existingRegistration) {
+      Alert.alert('Registration closed', 'The registration period for this event is over.');
+      return;
+    }
 
     // Get required fields (that are not optional)
     const requiredFields = fieldDefinitions
@@ -94,15 +191,18 @@ export default function SwapRegistrationScreen() {
       }
     }
 
+    if (itemCategoryOptions.length > 0 && selectedItemCategoryIds.length === 0) {
+      Alert.alert('Item types', 'Select at least one item type you may bring to this swap.');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      // Save swap registration
-      await saveSellerSwapRegistration(
-        user.id,
-        event.id,
-        formData,
-        requiredFields
-      );
+      const registrationPayload = {
+        ...formData,
+        [PLANNED_ITEM_CATEGORY_IDS_KEY]: selectedItemCategoryIds,
+      };
+      await saveSellerSwapRegistration(seller.id, event.id, registrationPayload, requiredFields);
 
       // Update seller profile with suggested field values
       const updateData: any = {};
@@ -140,7 +240,7 @@ export default function SwapRegistrationScreen() {
       });
 
       if (Object.keys(updateData).length > 0) {
-        await updateSeller(user.id, updateData);
+        await updateSeller(seller.id, updateData);
       }
 
       Alert.alert(
@@ -309,7 +409,7 @@ export default function SwapRegistrationScreen() {
     }
   };
 
-  if (eventLoading || loadingFields) {
+  if (eventLoading || loadingFields || (Boolean(user) && sellerLoading)) {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -318,7 +418,7 @@ export default function SwapRegistrationScreen() {
     );
   }
 
-  if (!event || !user) {
+  if (!event) {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Event not found</Text>
@@ -329,10 +429,123 @@ export default function SwapRegistrationScreen() {
     );
   }
 
+  if (event.archivedAt) {
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.infoTitle}>Event archived</Text>
+        <Text style={[styles.infoText, styles.signInExplainer]}>
+          This swap is no longer active. Registration and updates are not available.
+        </Text>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Text style={styles.backButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!user) {
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.infoTitle}>Sign in to register</Text>
+        <Text style={[styles.infoText, styles.signInExplainer]}>
+          You need a seller account to complete registration for {event.name}.
+        </Text>
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() =>
+            router.push({
+              pathname: '/(auth)/login',
+              params: { redirect: `/event/${event.id}/register` },
+            })
+          }
+        >
+          <Text style={styles.primaryButtonText}>Sign in</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          onPress={() =>
+            router.push({
+              pathname: '/(auth)/signup',
+              params: { redirect: `/event/${event.id}/register` },
+            })
+          }
+        >
+          <Text style={styles.secondaryButtonText}>Create account</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.backButton, styles.backButtonMuted]} onPress={() => router.back()}>
+          <Text style={styles.backButtonMutedText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (user && !sellerLoading && !seller) {
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.infoTitle}>Seller profile not found</Text>
+        <Text style={[styles.infoText, styles.signInExplainer]}>
+          Your account is signed in, but there is no seller profile linked to it yet. Finish signing up as a
+          seller, or sign in with a seller account, then try again.
+        </Text>
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() =>
+            router.push({
+              pathname: '/(auth)/signup',
+              params: { redirect: `/event/${event.id}/register` },
+            })
+          }
+        >
+          <Text style={styles.primaryButtonText}>Create seller account</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.backButton, styles.backButtonMuted]} onPress={() => router.back()}>
+          <Text style={styles.backButtonMutedText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const registrationWindowOpen = isSellerSwapRegistrationWindowOpen(event);
+  if (!loadingFields && !registrationWindowOpen && !existingRegistration) {
+    const now = new Date();
+    const open = event.registrationOpenDate ? new Date(event.registrationOpenDate) : null;
+    const close = event.registrationCloseDate ? new Date(event.registrationCloseDate) : null;
+    const fmt = (d: Date) =>
+      new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(d);
+    const reason =
+      open && now < open
+        ? `Registration opens on ${fmt(open)}.`
+        : close && now > close
+          ? `Registration closed on ${fmt(close)}.`
+          : (event.status as string) !== 'registration'
+            ? 'This event is not in the registration phase right now.'
+            : 'Registration is not open for this event right now.';
+
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.infoTitle}>Registration is not open</Text>
+        <Text style={[styles.infoText, styles.signInExplainer]}>
+          {reason} Check the event page for dates and status, or contact the organizer if you need help.
+        </Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => router.replace(`/event/${event.id}`)}>
+          <Text style={styles.primaryButtonText}>View event</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.backButton, styles.backButtonMuted]} onPress={() => router.back()}>
+          <Text style={styles.backButtonMutedText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (fieldDefinitions.length === 0) {
     return (
       <View style={styles.centerContainer}>
-        <Text style={styles.infoText}>No registration fields required for this event</Text>
+        <Text style={styles.infoTitle}>Registration form not set up yet</Text>
+        <Text style={[styles.infoText, styles.signInExplainer]}>
+          This event’s organization has not defined any swap registration questions yet. In the organizer app,
+          sign in as an org admin and open Swap registration fields to add at least one field (for example a
+          short text question), then reload this page.
+        </Text>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backButtonText}>Go Back</Text>
         </TouchableOpacity>
@@ -343,23 +556,23 @@ export default function SwapRegistrationScreen() {
   // Get fields organized by groups
   const getFieldsByGroup = () => {
     if (!pageSettings || !pageSettings.fieldGroups || pageSettings.fieldGroups.length === 0) {
-      // No groups defined, return all fields in default group
-      return {
-        groups: [{ id: 'default', title: 'Registration Information', fields: fieldDefinitions }],
-        unassigned: [],
+      const defaultGroup: FieldGroupWithDefinitions = {
+        id: 'default',
+        title: 'Registration Information',
+        order: 0,
+        fields: fieldDefinitions,
       };
+      return { groups: [defaultGroup], unassigned: [] };
     }
 
-    const groups = pageSettings.fieldGroups
-      .sort((a: any, b: any) => a.order - b.order)
-      .map((group: any) => ({
+    const groups: FieldGroupWithDefinitions[] = pageSettings.fieldGroups
+      .sort((a: FieldGroup, b: FieldGroup) => a.order - b.order)
+      .map((group: FieldGroup) => ({
         ...group,
         fields: fieldDefinitions.filter((f) => group.fields.includes(f.name)),
       }));
 
-    const assignedFields = new Set(
-      pageSettings.fieldGroups.flatMap((g: any) => g.fields)
-    );
+    const assignedFields = new Set(pageSettings.fieldGroups.flatMap((g: FieldGroup) => g.fields));
     const unassigned = fieldDefinitions.filter((f) => !assignedFields.has(f.name));
 
     return { groups, unassigned };
@@ -395,7 +608,52 @@ export default function SwapRegistrationScreen() {
           </Text>
         </View>
 
-        {groups.map((group: any) => (
+        {!registrationWindowOpen && existingRegistration && (
+          <View style={styles.noticeBox}>
+            <Text style={styles.noticeText}>
+              Registration is closed to new sellers, but you can still update the answers you already submitted.
+            </Text>
+          </View>
+        )}
+
+        {itemCategoryOptions.length > 0 && (
+          <View style={styles.fieldGroup}>
+            <Text style={styles.groupTitle}>Item types</Text>
+            <Text style={styles.groupDescription}>
+              Choose the categories you plan to list. When you pre-register items, only these types will be offered
+              (within what the organizer allows for this event).
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dropdownScroll}>
+              {itemCategoryOptions.map((opt) => {
+                const selected = selectedItemCategoryIds.includes(opt.id);
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[styles.dropdownOption, selected && styles.dropdownOptionSelected]}
+                    onPress={() => {
+                      setSelectedItemCategoryIds((prev) =>
+                        prev.includes(opt.id) ? prev.filter((x) => x !== opt.id) : [...prev, opt.id]
+                      );
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownOptionText,
+                        selected && styles.dropdownOptionTextSelected,
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <Text style={styles.helpText}>Select one or more. You can change this later while registration stays open.</Text>
+          </View>
+        )}
+
+        {groups.map((group) => (
           <View key={group.id} style={styles.fieldGroup}>
             <Text style={styles.groupTitle}>{group.title}</Text>
             {group.description && (
@@ -503,6 +761,19 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 24,
   },
+  noticeBox: {
+    backgroundColor: '#FFF8E1',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#FFE082',
+  },
+  noticeText: {
+    fontSize: 14,
+    color: '#6D4C41',
+    lineHeight: 20,
+  },
   infoText: {
     fontSize: 14,
     color: '#1976D2',
@@ -590,6 +861,49 @@ const styles = StyleSheet.create({
     color: '#DC3545',
     marginBottom: 20,
   },
+  infoTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  signInExplainer: {
+    marginBottom: 20,
+    textAlign: 'center',
+    color: '#444',
+  },
+  primaryButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    alignItems: 'center',
+    marginTop: 8,
+    width: '100%',
+    maxWidth: 320,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    alignItems: 'center',
+    marginTop: 12,
+    width: '100%',
+    maxWidth: 320,
+  },
+  secondaryButtonText: {
+    color: '#007AFF',
+    fontSize: 17,
+    fontWeight: '600',
+  },
   backButton: {
     backgroundColor: '#007AFF',
     borderRadius: 8,
@@ -598,6 +912,17 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  backButtonMuted: {
+    marginTop: 16,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#C5C5C5',
+  },
+  backButtonMutedText: {
+    color: '#666',
     fontSize: 16,
     fontWeight: '600',
   },

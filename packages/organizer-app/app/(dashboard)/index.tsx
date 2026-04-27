@@ -1,9 +1,25 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert, Platform, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth, useOrganizationEvents, useAdminOrganization, useAdminUser, signOut, deleteEvent } from 'shared';
+import {
+  useAuth,
+  useOrganizationEvents,
+  useAdminOrganization,
+  useAdminUser,
+  signOut,
+  deleteEvent,
+  archiveEvent,
+  isEventArchiveEligible,
+  buildSellerEventWebInviteUrl,
+} from 'shared';
 import { useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
+import * as Clipboard from 'expo-clipboard';
 import { theme } from '../../lib/theme';
+
+const SELLER_WEB_INVITE_ORIGIN =
+  typeof process !== 'undefined' && process.env.EXPO_PUBLIC_SELLER_WEB_INVITE_ORIGIN
+    ? process.env.EXPO_PUBLIC_SELLER_WEB_INVITE_ORIGIN.trim()
+    : '';
 
 export default function OrganizerDashboardScreen() {
   const { user, loading: authLoading } = useAuth();
@@ -13,6 +29,8 @@ export default function OrganizerDashboardScreen() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [copiedSellerRegUrlForEventId, setCopiedSellerRegUrlForEventId] = useState<string | null>(null);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -39,20 +57,38 @@ export default function OrganizerDashboardScreen() {
     });
   };
 
-  const formatEventStatus = (status: string): string => {
-    const statusMap: Record<string, string> = {
-      active: 'Active',
-      closed: 'Closed',
+  const handleArchiveEvent = (event: { id: string; name: string }) => {
+    const run = async () => {
+      setArchivingId(event.id);
+      try {
+        await archiveEvent(event.id);
+        await refetchEvents();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to archive event';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(message);
+        } else {
+          Alert.alert('Error', message);
+        }
+      } finally {
+        setArchivingId(null);
+      }
     };
-    return statusMap[status] || status;
-  };
 
-  const getEventStatusBadgeStyle = (status: string) => {
-    const styles: Record<string, { backgroundColor: string }> = {
-      active: { backgroundColor: theme.status.active },
-      closed: { backgroundColor: theme.status.closed },
-    };
-    return styles[status] || { backgroundColor: theme.status.closed };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const ok = window.confirm(`Archive "${event.name}"? It will be hidden from your dashboard and seller discovery.`);
+      if (!ok) return;
+      void run();
+    } else {
+      Alert.alert(
+        'Archive event',
+        `Archive "${event.name}"? It will be hidden from your dashboard and seller discovery.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Archive', onPress: () => void run() },
+        ]
+      );
+    }
   };
 
   const handleDeleteEvent = (event: { id: string; name: string }) => {
@@ -92,6 +128,13 @@ export default function OrganizerDashboardScreen() {
 
   const loading = authLoading || adminUserLoading || orgLoading || eventsLoading;
   const isAdmin = adminUser?.role === 'admin' || (!adminUser && !adminUserLoading && !!user);
+  /** Invite staff: any org user who is not role volunteer (admins + org admins). */
+  const canInviteStaff =
+    !!organization &&
+    !adminUserLoading &&
+    !!adminUser &&
+    adminUser.role !== 'volunteer';
+  const isVolunteer = adminUser?.role === 'volunteer';
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -155,12 +198,16 @@ export default function OrganizerDashboardScreen() {
       <View style={styles.header}>
         <View style={styles.headerTop}>
           {adminUser ? (
-            <View>
+            <View style={styles.headerUserBlock}>
               <Text style={styles.userName}>
                 {adminUser.first_name} {adminUser.last_name}
               </Text>
               <Text style={styles.userType}>
-                Org User, {adminUser.is_org_admin ? 'Org Admin' : 'Volunteer'}
+                Role: {adminUser.role === 'admin' ? 'Admin' : 'Volunteer'}
+                {adminUser.is_org_admin ? ' · Full org access' : ''}
+              </Text>
+              <Text style={styles.userHint}>
+                Name is display-only. Role (below) is what controls access.
               </Text>
             </View>
           ) : user?.email ? (
@@ -184,6 +231,29 @@ export default function OrganizerDashboardScreen() {
         <Text style={styles.title}>Org Dashboard</Text>
         {organization && (
           <Text style={styles.organizationName}>{organization.name}</Text>
+        )}
+        {organization && !adminUserLoading && isVolunteer && (
+          <View style={styles.volunteerStaffNotice} accessibilityRole="text">
+            <Text style={styles.volunteerStaffNoticeTitle}>Staff invitations</Text>
+            <Text style={styles.volunteerStaffNoticeText}>
+              Your database role is Volunteer (limited stations). To invite staff, set role to admin and full access in
+              admin_users—see scripts/sql/promote-to-org-admin.sql. A display name like “Admin User” does not change
+              role.
+            </Text>
+          </View>
+        )}
+        {canInviteStaff && (
+          <TouchableOpacity
+            style={styles.headerCreateStaffButton}
+            onPress={() => router.push('/(dashboard)/staff-accounts?create=1')}
+            accessibilityRole="button"
+            accessibilityLabel="Create Staff Account"
+          >
+            <View style={styles.staffAccountButtonContent}>
+              <Ionicons name="person-add-outline" size={20} color={theme.buttonText} />
+              <Text style={styles.headerCreateStaffButtonText}>Create Staff Account</Text>
+            </View>
+          </TouchableOpacity>
         )}
       </View>
 
@@ -233,6 +303,12 @@ export default function OrganizerDashboardScreen() {
           <Ionicons name="calendar-outline" size={22} color={theme.text} style={styles.sectionTitleIcon} />
           <Text style={styles.sectionTitleText}>Events</Text>
         </View>
+        {__DEV__ && !SELLER_WEB_INVITE_ORIGIN ? (
+          <Text style={styles.sellerDevHintBanner}>
+            Local seller simulation: set EXPO_PUBLIC_SELLER_WEB_INVITE_ORIGIN=http://localhost:8082 in
+            packages/organizer-app/.env to show copy-paste seller registration URLs on each event.
+          </Text>
+        ) : null}
         <View style={styles.sectionContent}>
         {events.length === 0 ? (
           <View style={styles.emptyState}>
@@ -263,13 +339,8 @@ export default function OrganizerDashboardScreen() {
                 onPress={() => router.push(`/(event)/manage?id=${event.id}`)}
               >
                 <View style={styles.eventHeader}>
-                  <View style={styles.eventHeaderLeft}>
-                    <Text style={styles.eventName}>{event.name}</Text>
-                    <Text style={styles.eventDate}>{formatDate(event.eventDate)}</Text>
-                  </View>
-                  <View style={[styles.eventStatusBadge, getEventStatusBadgeStyle(event.status)]}>
-                    <Text style={styles.eventStatusText}>{formatEventStatus(event.status)}</Text>
-                  </View>
+                  <Text style={styles.eventName}>{event.name}</Text>
+                  <Text style={styles.eventDate}>{formatDate(event.eventDate)}</Text>
                 </View>
 
                 <View style={styles.eventDetails}>
@@ -291,26 +362,84 @@ export default function OrganizerDashboardScreen() {
                   )}
                 </View>
 
+                {SELLER_WEB_INVITE_ORIGIN ? (
+                  <View style={styles.sellerDevBox}>
+                    <Text style={styles.sellerDevLabel}>Seller registration (browser — local dev)</Text>
+                    <Text selectable style={styles.sellerDevUrl}>
+                      {buildSellerEventWebInviteUrl(SELLER_WEB_INVITE_ORIGIN, event.id, 'register')}
+                    </Text>
+                    <Pressable
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        const url = buildSellerEventWebInviteUrl(
+                          SELLER_WEB_INVITE_ORIGIN,
+                          event.id,
+                          'register'
+                        );
+                        Clipboard.setStringAsync(url).then(() => {
+                          setCopiedSellerRegUrlForEventId(event.id);
+                          setTimeout(() => setCopiedSellerRegUrlForEventId(null), 2000);
+                        });
+                      }}
+                      style={({ pressed }) => [
+                        styles.sellerDevCopyBtn,
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text style={styles.sellerDevCopyBtnText}>
+                        {copiedSellerRegUrlForEventId === event.id ? 'Copied' : 'Copy registration URL'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
                 <View style={styles.eventAction}>
                   <Text style={styles.eventActionText}>Manage Event</Text>
                   <View style={styles.eventActionRight}>
                     {isAdmin && (
-                    <Pressable
-                      onPress={(e) => {
-                        e?.stopPropagation?.();
-                        handleDeleteEvent(event);
-                      }}
-                      style={({ pressed }) => [
-                        styles.deleteButton,
-                        pressed && { opacity: 0.7 },
-                        deletingId === event.id && styles.deleteButtonDisabled,
-                      ]}
-                      disabled={deletingId === event.id}
-                    >
-                      <Text style={styles.deleteButtonText}>
-                        {deletingId === event.id ? 'Deleting…' : 'Delete'}
-                      </Text>
-                    </Pressable>
+                    <>
+                      <Pressable
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          if (isEventArchiveEligible(event)) {
+                            handleArchiveEvent(event);
+                          }
+                        }}
+                        style={({ pressed }) => [
+                          styles.archiveButton,
+                          pressed && isEventArchiveEligible(event) && { opacity: 0.7 },
+                          (!isEventArchiveEligible(event) || archivingId === event.id) &&
+                            styles.archiveButtonDisabled,
+                        ]}
+                        disabled={!isEventArchiveEligible(event) || archivingId === event.id}
+                        accessibilityState={{ disabled: !isEventArchiveEligible(event) || archivingId === event.id }}
+                      >
+                        <Text
+                          style={[
+                            styles.archiveButtonText,
+                            !isEventArchiveEligible(event) && styles.archiveButtonTextDisabled,
+                          ]}
+                        >
+                          {archivingId === event.id ? 'Archiving…' : 'Archive'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          handleDeleteEvent(event);
+                        }}
+                        style={({ pressed }) => [
+                          styles.deleteButton,
+                          pressed && { opacity: 0.7 },
+                          deletingId === event.id && styles.deleteButtonDisabled,
+                        ]}
+                        disabled={deletingId === event.id}
+                      >
+                        <Text style={styles.deleteButtonText}>
+                          {deletingId === event.id ? 'Deleting…' : 'Delete'}
+                        </Text>
+                      </Pressable>
+                    </>
                     )}
                     <Text style={styles.eventActionArrow}>→</Text>
                   </View>
@@ -461,21 +590,30 @@ export default function OrganizerDashboardScreen() {
           </View>
           )}
 
-          {isAdmin && (
+          {canInviteStaff && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Team Management</Text>
               <View style={styles.sectionContent}>
               <TouchableOpacity
+                style={styles.createStaffAccountButton}
+                onPress={() => router.push('/(dashboard)/staff-accounts?create=1')}
+              >
+                <View style={styles.staffAccountButtonContent}>
+                  <Ionicons name="person-add-outline" size={20} color={theme.buttonText} />
+                  <Text style={styles.createStaffAccountButtonText}>Create Staff Account</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
                 style={styles.settingCard}
-                onPress={() => router.push('/(dashboard)/users')}
+                onPress={() => router.push('/(dashboard)/staff-accounts')}
               >
                 <View style={styles.settingCardContent}>
                   <View style={styles.settingCardLeft}>
                     <Text style={styles.settingCardIcon}>👥</Text>
                     <View style={styles.settingCardText}>
-                      <Text style={styles.settingCardTitle}>Team Members</Text>
+                      <Text style={styles.settingCardTitle}>Staff Accounts</Text>
                       <Text style={styles.settingCardDescription}>
-                        Manage organization users and create volunteer accounts
+                        Invite staff by email to set their password and join your organization
                       </Text>
                     </View>
                   </View>
@@ -525,6 +663,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  headerUserBlock: {
+    flex: 1,
+    flexShrink: 1,
+    marginRight: 8,
+    minWidth: 0,
+  },
   userName: {
     fontSize: 16,
     color: theme.link,
@@ -534,6 +678,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.textSecondary,
     marginTop: 2,
+  },
+  userHint: {
+    fontSize: 11,
+    color: theme.textSecondary,
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   signOutButton: {
     paddingHorizontal: 12,
@@ -561,6 +711,53 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: theme.textSecondary,
     fontWeight: '500',
+  },
+  staffAccountButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  headerCreateStaffButton: {
+    marginTop: 16,
+    alignSelf: 'stretch',
+    width: '100%',
+    minHeight: 48,
+    backgroundColor: theme.button,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      // @ts-ignore web pointer
+      cursor: 'pointer',
+    }),
+  },
+  headerCreateStaffButtonText: {
+    color: theme.buttonText,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  volunteerStaffNotice: {
+    marginTop: 16,
+    alignSelf: 'stretch',
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: theme.secondary + '55',
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  volunteerStaffNoticeTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.text,
+    marginBottom: 6,
+  },
+  volunteerStaffNoticeText: {
+    fontSize: 14,
+    color: theme.textSecondary,
+    lineHeight: 20,
   },
   noOrgCard: {
     margin: 16,
@@ -690,6 +887,47 @@ const styles = StyleSheet.create({
   sectionContent: {
     padding: 20,
   },
+  sellerDevHintBanner: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    lineHeight: 17,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    marginTop: -8,
+  },
+  sellerDevBox: {
+    marginTop: 4,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: theme.background,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  sellerDevLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.text,
+    marginBottom: 6,
+  },
+  sellerDevUrl: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  sellerDevCopyBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: theme.button,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  sellerDevCopyBtnText: {
+    color: theme.buttonText,
+    fontSize: 14,
+    fontWeight: '600',
+  },
   settingCard: {
     backgroundColor: theme.surface,
     borderRadius: 12,
@@ -747,14 +985,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   eventHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
     marginBottom: 12,
-  },
-  eventHeaderLeft: {
-    flex: 1,
-    marginRight: 12,
   },
   eventName: {
     fontSize: 20,
@@ -765,17 +996,6 @@ const styles = StyleSheet.create({
   eventDate: {
     fontSize: 14,
     color: theme.textSecondary,
-  },
-  eventStatusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  eventStatusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: theme.pureWhite,
-    textTransform: 'uppercase',
   },
   eventDetails: {
     marginBottom: 12,
@@ -811,6 +1031,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  archiveButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: theme.secondary + '35',
+    borderWidth: 1,
+    borderColor: theme.border,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      userSelect: 'none',
+    } as any),
+  },
+  archiveButtonDisabled: {
+    opacity: 0.45,
+    ...(Platform.OS === 'web' && {
+      cursor: 'not-allowed',
+    } as any),
+  },
+  archiveButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.text,
+  },
+  archiveButtonTextDisabled: {
+    color: theme.textSecondary,
   },
   deleteButton: {
     paddingHorizontal: 12,
@@ -870,6 +1116,26 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   createEventButtonText: {
+    color: theme.buttonText,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  createStaffAccountButton: {
+    alignSelf: 'stretch',
+    width: '100%',
+    minHeight: 48,
+    backgroundColor: theme.button,
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      // @ts-ignore web pointer
+      cursor: 'pointer',
+    }),
+  },
+  createStaffAccountButtonText: {
     color: theme.buttonText,
     fontSize: 16,
     fontWeight: '600',

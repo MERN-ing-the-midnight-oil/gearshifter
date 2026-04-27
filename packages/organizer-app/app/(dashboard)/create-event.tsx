@@ -1,14 +1,22 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Platform, Modal, Switch, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Platform, Switch, Pressable } from 'react-native';
 import { useAuth, useAdminOrganization, createEvent, signOut } from 'shared';
 import { useRouter } from 'expo-router';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import { theme } from '../../lib/theme';
+import { InlineWebCalendar } from '../../components/InlineWebCalendar';
 
 // Conditionally import DateTimePicker only for native platforms
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const DateTimePicker = Platform.OS !== 'web' 
   ? require('@react-native-community/datetimepicker').default 
   : null;
+
+const createPortalWeb =
+  Platform.OS === 'web'
+    ? // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+      (require('react-dom') as { createPortal: (node: ReactNode, container: Element | DocumentFragment) => ReactNode })
+        .createPortal
+    : null;
 
 // Web Date Picker Modal Component
 const WebDatePickerModal = ({ 
@@ -17,7 +25,8 @@ const WebDatePickerModal = ({
   onClose, 
   onSelect, 
   mode = 'date',
-  minimumDate 
+  minimumDate,
+  title,
 }: {
   visible: boolean;
   value: Date | null;
@@ -25,7 +34,15 @@ const WebDatePickerModal = ({
   onSelect: (date: Date) => void;
   mode?: 'date' | 'datetime';
   minimumDate?: Date;
+  title?: string;
 }) => {
+  function formatDateForInput(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   const [selectedDate, setSelectedDate] = useState<Date>(value || new Date());
   const [selectedTime, setSelectedTime] = useState<{ hours: number; minutes: number }>(() => {
     if (value) {
@@ -33,58 +50,28 @@ const WebDatePickerModal = ({
     }
     return { hours: 9, minutes: 0 };
   });
-  const dateInputRef = useRef<any>(null);
-  const timeInputRef = useRef<any>(null);
+  const prevVisibleRef = useRef(false);
+  const [inputMountKey, setInputMountKey] = useState(0);
 
-  // Update state when value prop changes
+  // When modal is closed, keep internal state aligned with parent `value` for the next open.
   useEffect(() => {
-    if (value) {
+    if (!visible && value) {
       setSelectedDate(value);
       setSelectedTime({ hours: value.getHours(), minutes: value.getMinutes() });
     }
-  }, [value]);
+  }, [value, visible]);
 
-  // Set up web input types using refs and direct DOM manipulation
-  useEffect(() => {
-    if (Platform.OS === 'web' && visible) {
-      // Set date input type
-      if (dateInputRef.current) {
-        const element = dateInputRef.current as any;
-        // Try multiple methods to set the type
-        if (element && element.setNativeProps) {
-          element.setNativeProps({ type: 'date' });
-        }
-        // Direct DOM access for React Native Web
-        const node = element?._nativeNode || element?.base || element;
-        if (node && node.setAttribute) {
-          node.setAttribute('type', 'date');
-          if (minimumDate) {
-            node.setAttribute('min', formatDateForInput(minimumDate));
-          }
-        } else if (node && (node as any).type !== undefined) {
-          (node as any).type = 'date';
-          if (minimumDate) {
-            (node as any).min = formatDateForInput(minimumDate);
-          }
-        }
+  // On open: sync from `value` and remount the time field; date uses react-datepicker (web).
+  useLayoutEffect(() => {
+    if (visible && !prevVisibleRef.current) {
+      if (value) {
+        setSelectedDate(value);
+        setSelectedTime({ hours: value.getHours(), minutes: value.getMinutes() });
       }
-      // Set time input type
-      if (timeInputRef.current && mode === 'datetime') {
-        const element = timeInputRef.current as any;
-        if (element && element.setNativeProps) {
-          element.setNativeProps({ type: 'time' });
-        }
-        const node = element?._nativeNode || element?.base || element;
-        if (node && node.setAttribute) {
-          node.setAttribute('type', 'time');
-        } else if (node && (node as any).type !== undefined) {
-          (node as any).type = 'time';
-        }
-      }
+      setInputMountKey((k) => k + 1);
     }
-  }, [mode, visible, minimumDate]);
-
-  if (Platform.OS !== 'web') return null;
+    prevVisibleRef.current = visible;
+  }, [visible, value]);
 
   const handleConfirm = () => {
     const date = new Date(selectedDate);
@@ -95,88 +82,75 @@ const WebDatePickerModal = ({
     onClose();
   };
 
-  const formatDateForInput = (date: Date): string => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
+  const selectedCombined = useMemo(() => {
+    const d = new Date(selectedDate);
+    d.setHours(selectedTime.hours, selectedTime.minutes, 0, 0);
+    return d;
+  }, [selectedDate, selectedTime]);
 
-  const formatTimeForInput = (hours: number, minutes: number): string => {
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-  };
+  if (Platform.OS !== 'web') return null;
 
-  return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <View style={webPickerStyles.modalOverlay}>
-        <View style={webPickerStyles.modalContent}>
-          <View style={webPickerStyles.modalHeader}>
-            <Text style={webPickerStyles.modalTitle}>
-              {mode === 'date' ? 'Select Date' : 'Select Date & Time'}
-            </Text>
-            <TouchableOpacity onPress={onClose} style={webPickerStyles.closeButton}>
-              <Text style={webPickerStyles.closeButtonText}>×</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <View style={webPickerStyles.pickerContainer}>
-            <View style={webPickerStyles.dateInputContainer}>
-              <Text style={webPickerStyles.inputLabel}>Date</Text>
-              <TextInput
-                ref={dateInputRef}
-                style={webPickerStyles.dateInput}
-                value={formatDateForInput(selectedDate)}
-                onChangeText={(text) => {
-                  const date = new Date(text);
-                  if (!isNaN(date.getTime())) {
-                    setSelectedDate(date);
-                  }
-                }}
-                // @ts-ignore - web-specific prop
-                {...(Platform.OS === 'web' && {
-                  type: 'date',
-                  min: minimumDate ? formatDateForInput(minimumDate) : undefined,
-                })}
-              />
-            </View>
+  // Portaled overlay (not RN Modal): react-native-web Modal wraps content in a focus trap.
+  // Native <input type="date"> calendar UI moves focus outside that subtree, the trap
+  // refocuses inside the modal and the picker collapses — feels like the dialog closed.
+  if (typeof document === 'undefined' || !createPortalWeb) return null;
 
-            {mode === 'datetime' && (
-              <View style={webPickerStyles.timeInputContainer}>
-                <Text style={webPickerStyles.inputLabel}>Time</Text>
-                <TextInput
-                  ref={timeInputRef}
-                  style={webPickerStyles.timeInput}
-                  value={formatTimeForInput(selectedTime.hours, selectedTime.minutes)}
-                  onChangeText={(text) => {
-                    const [hours, minutes] = text.split(':').map(Number);
-                    if (!isNaN(hours) && !isNaN(minutes) && hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
-                      setSelectedTime({ hours, minutes });
-                    }
-                  }}
-                  // @ts-ignore - web-specific prop
-                  {...(Platform.OS === 'web' && { type: 'time' })}
-                />
-              </View>
-            )}
-          </View>
-
-          <View style={webPickerStyles.modalFooter}>
-            <TouchableOpacity onPress={onClose} style={webPickerStyles.cancelButton}>
-              <Text style={webPickerStyles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleConfirm} style={webPickerStyles.confirmButton}>
-              <Text style={webPickerStyles.confirmButtonText}>Confirm</Text>
-            </TouchableOpacity>
-          </View>
+  const pickerUi = visible ? (
+    <View style={webPickerStyles.modalOverlay}>
+      <Pressable style={webPickerStyles.modalBackdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="Dismiss date picker" />
+      <Pressable
+        style={webPickerStyles.modalContent}
+        onPress={(e) => {
+          const ev = e as unknown as { stopPropagation?: () => void };
+          ev.stopPropagation?.();
+        }}
+        {...(Platform.OS === 'web'
+          ? ({
+              onMouseDown: (e: { stopPropagation?: () => void }) => e.stopPropagation?.(),
+            } as object)
+          : {})}
+      >
+        <View style={webPickerStyles.modalHeader}>
+          <Text style={webPickerStyles.modalTitle}>
+            {title ?? (mode === 'date' ? 'Select Date' : 'Select Date & Time')}
+          </Text>
+          <TouchableOpacity onPress={onClose} style={webPickerStyles.closeButton}>
+            <Text style={webPickerStyles.closeButtonText}>×</Text>
+          </TouchableOpacity>
         </View>
-      </View>
-    </Modal>
-  );
+
+        <View style={webPickerStyles.pickerContainer}>
+          <View style={webPickerStyles.dateInputContainer}>
+            <Text style={webPickerStyles.inputLabel}>Date</Text>
+            <InlineWebCalendar
+              key={`web-cal-${inputMountKey}`}
+              selected={selectedCombined}
+              minDate={minimumDate}
+              showTimeSelect={mode === 'datetime'}
+              onChange={(d) => {
+                setSelectedDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+                if (mode === 'datetime') {
+                  setSelectedTime({ hours: d.getHours(), minutes: d.getMinutes() });
+                }
+              }}
+            />
+          </View>
+
+        </View>
+
+        <View style={webPickerStyles.modalFooter}>
+          <TouchableOpacity onPress={onClose} style={webPickerStyles.cancelButton}>
+            <Text style={webPickerStyles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleConfirm} style={webPickerStyles.confirmButton}>
+            <Text style={webPickerStyles.confirmButtonText}>Confirm</Text>
+          </TouchableOpacity>
+        </View>
+      </Pressable>
+    </View>
+  ) : null;
+
+  return createPortalWeb(pickerUi, document.body);
 };
 
 export default function CreateEventScreen() {
@@ -467,7 +441,8 @@ export default function CreateEventScreen() {
         pickupStartTime: formData.pickupStartTime || undefined,
         pickupEndTime: formData.pickupEndTime || undefined,
         priceDropTime: formData.priceDropTimes.length > 0 ? formData.priceDropTimes[0] : undefined,
-        status: 'registration' as const,
+        // DB enum is `active` | `closed` (see event_status migration), not legacy registration/checkin/...
+        status: 'active',
         settings: {
           priceDropTimes: formData.priceDropTimes.length > 0 ? formData.priceDropTimes : undefined,
           priceDropAmountControl: formData.priceDropTimes.length > 0 ? formData.priceDropAmountControl : undefined,
@@ -492,19 +467,7 @@ export default function CreateEventScreen() {
       const result = await createEvent(organization.id, eventPayload);
       console.log('[CreateEvent] Event created successfully:', result);
 
-      Alert.alert(
-        'Success',
-        'Event created successfully!',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              console.log('[CreateEvent] Navigating to events list after successful creation');
-              router.replace('/(dashboard)');
-            },
-          },
-        ]
-      );
+      router.replace('/(dashboard)');
     } catch (error) {
       console.error('[CreateEvent] Error creating event:', error);
       console.error('[CreateEvent] Error details:', {
@@ -568,13 +531,8 @@ export default function CreateEventScreen() {
     }
   };
 
-  // Log when component renders to verify button exists
-  useEffect(() => {
-    console.log('[CreateEvent] Component rendered, sign out button should be visible');
-    console.log('[CreateEvent] User:', { id: user?.id, email: user?.email });
-  });
-
   return (
+    <>
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -639,6 +597,7 @@ export default function CreateEventScreen() {
                   setShowPicker({ ...showPicker, eventDate: false });
                 }}
                 mode="date"
+                title="Event date"
                 minimumDate={new Date()}
               />
             </>
@@ -708,6 +667,7 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, registrationOpenDate: false });
                   }}
                   mode="date"
+                  title="Registration open date"
                   minimumDate={new Date()}
                 />
               </>
@@ -786,6 +746,7 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, registrationCloseDate: false });
                   }}
                   mode="date"
+                  title="Registration close date"
                   minimumDate={formData.registrationOpenDate || new Date()}
                 />
               </>
@@ -864,6 +825,7 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, shopOpenTime: false });
                   }}
                   mode="datetime"
+                  title="Shop open time"
                   minimumDate={formData.eventDate || new Date()}
                 />
               </>
@@ -942,6 +904,7 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, shopCloseTime: false });
                   }}
                   mode="datetime"
+                  title="Shop close time"
                   minimumDate={formData.shopOpenTime || formData.eventDate || new Date()}
                 />
               </>
@@ -1020,7 +983,7 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, gearDropOffStartTime: false });
                   }}
                   mode="datetime"
-                  minimumDate={formData.eventDate || new Date()}
+                  title="Gear drop-off start"
                 />
               </>
             ) : (
@@ -1048,7 +1011,6 @@ export default function CreateEventScreen() {
                       mode="datetime"
                       display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                       onChange={(event, selectedDate) => handleDateChange('gearDropOffStartTime', event, selectedDate)}
-                      minimumDate={formData.eventDate || new Date()}
                     />
                     {Platform.OS === 'ios' && (
                       <TouchableOpacity
@@ -1098,7 +1060,8 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, gearDropOffEndTime: false });
                   }}
                   mode="datetime"
-                  minimumDate={formData.gearDropOffStartTime || formData.eventDate || new Date()}
+                  title="Gear drop-off end"
+                  minimumDate={formData.gearDropOffStartTime || undefined}
                 />
               </>
             ) : (
@@ -1126,7 +1089,9 @@ export default function CreateEventScreen() {
                       mode="datetime"
                       display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                       onChange={(event, selectedDate) => handleDateChange('gearDropOffEndTime', event, selectedDate)}
-                      minimumDate={formData.gearDropOffStartTime || formData.eventDate || new Date()}
+                      {...(formData.gearDropOffStartTime
+                        ? { minimumDate: formData.gearDropOffStartTime }
+                        : {})}
                     />
                     {Platform.OS === 'ios' && (
                       <TouchableOpacity
@@ -1190,6 +1155,7 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, pickupStartTime: false });
                   }}
                   mode="datetime"
+                  title="Seller pickup window start"
                   minimumDate={formData.shopCloseTime || formData.eventDate || new Date()}
                 />
               </>
@@ -1268,6 +1234,7 @@ export default function CreateEventScreen() {
                     setShowPicker({ ...showPicker, pickupEndTime: false });
                   }}
                   mode="datetime"
+                  title="Seller pickup window end"
                   minimumDate={formData.pickupStartTime || formData.shopCloseTime || formData.eventDate || new Date()}
                 />
               </>
@@ -1342,6 +1309,7 @@ export default function CreateEventScreen() {
                         setShowPicker({ ...showPicker, priceDropTime: { ...showPicker.priceDropTime, [index]: false } });
                       }}
                       mode="datetime"
+                      title={`Organization price drop ${index + 1}`}
                       minimumDate={formData.shopOpenTime || formData.eventDate || new Date()}
                     />
                   </>
@@ -1578,6 +1546,7 @@ export default function CreateEventScreen() {
         </View>
       </View>
     </ScrollView>
+    </>
   );
 }
 
@@ -1904,12 +1873,29 @@ const styles = StyleSheet.create({
 
 const webPickerStyles = StyleSheet.create({
   modalOverlay: {
+    // RN web: fixed full-viewport overlay (not in RN core ViewStyle typings)
+    ...({
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 100000,
+    } as object),
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    width: '100%',
+    minHeight: '100%',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    zIndex: 0,
+  },
   modalContent: {
+    zIndex: 1,
+    ...(Platform.OS === 'web' ? ({ position: 'relative' } as object) : {}),
     backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 20,

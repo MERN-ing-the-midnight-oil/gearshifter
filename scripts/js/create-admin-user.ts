@@ -1,25 +1,32 @@
 /**
  * Create an admin user (auth user + admin_users record) using the Supabase service role.
  *
- * Usage (from repo root):
+ * Usage (from repo root, after yarn install):
+ *   yarn create:axel-admin
+ *   # → Axel Admin / Bellingham Ski Swap / axel.admin@bellingham-skiswap.test / password asdfasdf
  *   npx tsx scripts/js/create-admin-user.ts "Anthony Admin" "asdfasdf"
  *   # Optional: pass email as 4th arg; default is anthony.admin@example.com
  *
- * Env: load from packages/organizer-app/.env or set EXPO_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.
+ * Env (first match wins for each key unless override):
+ *   .env or .env.local (repo root), then packages/organizer-app/.env, packages/seller-app/.env
+ * Required: EXPO_PUBLIC_SUPABASE_URL (or SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY
+ * (Supabase Dashboard → Project Settings → API)
  */
 
 import { createClient } from '@supabase/supabase-js';
 import { resolve } from 'path';
+import { config as loadEnv } from 'dotenv';
 
-// Load .env from organizer-app or seller-app if present
-try {
-  const { config } = require('dotenv');
-  const organizerEnv = resolve(process.cwd(), 'packages/organizer-app/.env');
-  const sellerEnv = resolve(process.cwd(), 'packages/seller-app/.env');
-  config({ path: organizerEnv });
-  if (process.env.EXPO_PUBLIC_SUPABASE_URL === undefined) config({ path: sellerEnv });
-} catch {
-  // dotenv not available, use process.env
+const cwd = process.cwd();
+const envPaths = [
+  resolve(cwd, '.env'),
+  resolve(cwd, '.env.local'),
+  resolve(cwd, 'packages/organizer-app/.env'),
+  resolve(cwd, 'packages/organizer-app/.env.local'),
+  resolve(cwd, 'packages/seller-app/.env'),
+];
+for (const p of envPaths) {
+  loadEnv({ path: p, override: true });
 }
 
 const DEFAULT_ORG_ID = '11111111-1111-1111-1111-111111111111';
@@ -32,11 +39,18 @@ async function main() {
   const [firstName, ...lastParts] = displayName.trim().split(/\s+/);
   const lastName = lastParts.length ? lastParts.join(' ') : 'Admin';
 
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl =
+    process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() ||
+    process.env.SUPABASE_URL?.trim() ||
+    '';
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '';
 
   if (!supabaseUrl || !serviceRoleKey) {
-    console.error('Missing env: set EXPO_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
+    console.error('Missing Supabase credentials.\n');
+    console.error('Set in .env at the repo root or in packages/organizer-app/.env:\n');
+    console.error('  EXPO_PUBLIC_SUPABASE_URL=https://xxxxxxxx.supabase.co');
+    console.error('  SUPABASE_SERVICE_ROLE_KEY=<service_role secret from Dashboard → API>\n');
+    console.error('Tried loading:', envPaths.join(', '));
     process.exit(1);
   }
 

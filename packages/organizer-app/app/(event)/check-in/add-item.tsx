@@ -14,7 +14,7 @@ import {
   createItem,
   updateItemStatus,
   getEventFieldDefinitions,
-  getOrganizationCategories,
+  getEventItemCategoryTree,
   isUuidString,
   type ItemFieldDefinition,
   type ItemCategory,
@@ -71,8 +71,8 @@ export default function CheckInAddItemScreen() {
   const loadCategories = async () => {
     if (!event) return;
     try {
-      const orgCategories = await getOrganizationCategories(event.organizationId);
-      setCategories(orgCategories);
+      const tree = await getEventItemCategoryTree(event.id);
+      setCategories(tree);
     } catch (error) {
       console.error('Failed to load categories:', error);
     }

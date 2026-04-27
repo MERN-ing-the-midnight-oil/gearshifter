@@ -76,3 +76,4 @@ packages/*/app/**/*.js
 
 # Local / personal notes (not committed)
 /command lines cheat sheet
+docs/archive/Bike Swap App Overview.md

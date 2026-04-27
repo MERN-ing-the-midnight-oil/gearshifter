@@ -1,42 +1,45 @@
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { signInWithEmail } from 'shared';
+import { normalizePhoneE164US, signInWithPhone } from 'shared';
 import { theme } from '../../lib/theme';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { redirect } = useLocalSearchParams<{ redirect?: string }>();
+  const [phoneRaw, setPhoneRaw] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async () => {
-    if (!email.trim()) {
-      Alert.alert('Error', 'Please enter your email');
-      return;
-    }
-
-    if (!password.trim()) {
-      Alert.alert('Error', 'Please enter your password');
+  const handleSendCode = async () => {
+    let phoneE164: string;
+    try {
+      phoneE164 = normalizePhoneE164US(phoneRaw);
+    } catch (e) {
+      Alert.alert('Invalid phone', e instanceof Error ? e.message : 'Please check the number.');
       return;
     }
 
     setLoading(true);
     try {
-      await signInWithEmail({ email: email.trim(), password });
-      // Navigation will be handled by the auth guard
-      router.replace('/(tabs)');
-    } catch (error: any) {
-      let errorMessage = error.message || 'Failed to sign in';
-      
-      // Provide helpful error messages
-      if (error.message?.includes('Invalid login credentials')) {
-        errorMessage = 'Invalid email or password. Please check your credentials and try again.';
-      } else if (error.message?.includes('Email not confirmed')) {
-        errorMessage = 'Please check your email and confirm your account before signing in.';
-      }
-      
-      Alert.alert('Sign In Error', errorMessage);
+      await signInWithPhone({ phone: phoneE164 });
+      router.push({
+        pathname: '/(auth)/verify-phone',
+        params: {
+          phone: phoneE164,
+          ...(redirect ? { redirect: String(redirect) } : {}),
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not send code';
+      Alert.alert('SMS error', message);
     } finally {
       setLoading(false);
     }
@@ -45,54 +48,40 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Welcome</Text>
-      <Text style={styles.subtitle}>Sign in to your account</Text>
+      <Text style={styles.subtitle}>Sign in with your phone number. We will text you a one-time code.</Text>
 
       <View style={styles.inputContainer}>
-        <Text style={styles.label}>Email</Text>
+        <Text style={styles.label}>Mobile phone</Text>
         <TextInput
           style={styles.input}
-          placeholder="your@email.com"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoComplete="email"
+          placeholder="+1 555 123 4567"
+          value={phoneRaw}
+          onChangeText={setPhoneRaw}
+          keyboardType="phone-pad"
+          autoComplete="tel"
           editable={!loading}
         />
-      </View>
-
-      <View style={styles.inputContainer}>
-        <Text style={styles.label}>Password</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="••••••••"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoComplete="password"
-          editable={!loading}
-        />
+        <Text style={styles.hint}>US numbers can be entered with or without +1.</Text>
       </View>
 
       <TouchableOpacity
-        style={[styles.loginButton, loading && styles.loginButtonDisabled]}
-        onPress={handleLogin}
+        style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
+        onPress={handleSendCode}
         disabled={loading}
       >
         {loading ? (
           <ActivityIndicator color={theme.buttonText} />
         ) : (
-          <Text style={styles.loginButtonText}>Sign In</Text>
+          <Text style={styles.primaryButtonText}>Send code</Text>
         )}
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={styles.signupButton}
+        style={styles.secondary}
         onPress={() => router.push('/(auth)/signup')}
         disabled={loading}
       >
-        <Text style={styles.signupButtonText}>Create New Account</Text>
+        <Text style={styles.secondaryText}>New here? Create an account (same flow)</Text>
       </TouchableOpacity>
     </View>
   );
@@ -116,7 +105,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: theme.textSecondary,
     textAlign: 'center',
-    marginBottom: 40,
+    marginBottom: 32,
+    maxWidth: 340,
   },
   inputContainer: {
     width: '100%',
@@ -136,7 +126,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.border,
   },
-  loginButton: {
+  hint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: theme.textSecondary,
+  },
+  primaryButton: {
     backgroundColor: theme.button,
     borderRadius: 12,
     padding: 18,
@@ -144,21 +139,22 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 10,
   },
-  loginButtonDisabled: {
+  primaryButtonDisabled: {
     opacity: 0.6,
   },
-  loginButtonText: {
+  primaryButtonText: {
     color: theme.buttonText,
     fontSize: 18,
     fontWeight: '600',
   },
-  signupButton: {
-    marginTop: 20,
+  secondary: {
+    marginTop: 24,
     padding: 12,
   },
-  signupButtonText: {
+  secondaryText: {
     color: theme.link,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
+    textAlign: 'center',
   },
 });

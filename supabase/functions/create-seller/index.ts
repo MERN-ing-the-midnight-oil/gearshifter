@@ -17,6 +17,14 @@ function randomPassword(): string {
   return s;
 }
 
+function generateSecureAccessToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i]!.toString(16).padStart(2, '0');
+  return hex;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -90,6 +98,7 @@ Deno.serve(async (req) => {
 
   const sellerId = crypto.randomUUID();
   const qr_code = generateSellerQRCode(sellerId);
+  const access_token = generateSecureAccessToken();
 
   const { data: sellerRow, error: insertError } = await supabase
     .from('sellers')
@@ -101,6 +110,7 @@ Deno.serve(async (req) => {
       phone,
       email,
       qr_code,
+      access_token,
       is_guest: false,
     })
     .select()

@@ -10,6 +10,48 @@ VALUES
   ('11111111-1111-1111-1111-111111111111', 'Bellingham Ski Swap', 'bellingham-ski-swap', 0.25, 0.20)
 ON CONFLICT (slug) DO NOTHING;
 
+-- Default seller swap registration questions (organizer app can add/edit more)
+INSERT INTO swap_registration_field_definitions (
+  organization_id,
+  name,
+  label,
+  field_type,
+  is_required,
+  is_optional,
+  display_order,
+  placeholder,
+  help_text,
+  validation_rules,
+  is_suggested_field
+) VALUES
+  (
+    '11111111-1111-1111-1111-111111111111',
+    'how_heard',
+    'How did you hear about this swap?',
+    'text',
+    false,
+    true,
+    0,
+    'Friend, poster, social media…',
+    'Optional; helps organizers improve outreach.',
+    '{}',
+    false
+  ),
+  (
+    '11111111-1111-1111-1111-111111111111',
+    'seller_notes',
+    'Anything we should know?',
+    'textarea',
+    false,
+    true,
+    1,
+    'Accessibility, large items, etc.',
+    'Optional notes for check-in staff.',
+    '{}',
+    false
+  )
+ON CONFLICT (organization_id, name) DO NOTHING;
+
 -- ============================================
 -- AUTH USERS (These would normally be created via Supabase Auth UI or API)
 -- ============================================

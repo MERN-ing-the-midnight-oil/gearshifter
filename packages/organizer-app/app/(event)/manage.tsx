@@ -11,21 +11,27 @@ import {
   TextInput,
   Modal,
   Pressable,
+  Switch,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import {
   getEvent,
   updateEvent,
   getOrgUsers,
   getEventSwapRegistrations,
   getSellersByIds,
+  getOrganizationCategories,
+  flattenItemCategoriesForPicker,
   useAuth,
   useAdminUser,
   type EventWithOrganization,
   type EventStatus,
+  type EventSettings,
 } from 'shared';
 import { theme } from '../../lib/theme';
+import { SellerEventInvitePanel } from '../../components/SellerEventInvitePanel';
+import { InlineWebCalendar } from '../../components/InlineWebCalendar';
 
 const DateTimePicker = Platform.OS !== 'web'
   ? require('@react-native-community/datetimepicker').default
@@ -38,6 +44,7 @@ const WebDatePickerModal = ({
   onSelect,
   mode = 'date',
   minimumDate,
+  title,
 }: {
   visible: boolean;
   value: Date | null;
@@ -45,26 +52,41 @@ const WebDatePickerModal = ({
   onSelect: (date: Date) => void;
   mode?: 'date' | 'datetime';
   minimumDate?: Date;
+  title?: string;
 }) => {
   const [selectedDate, setSelectedDate] = useState<Date>(value || new Date());
   const [selectedTime, setSelectedTime] = useState<{ hours: number; minutes: number }>(() => {
     if (value) return { hours: value.getHours(), minutes: value.getMinutes() };
     return { hours: 9, minutes: 0 };
   });
+  const prevVisibleRef = useRef(false);
+  const [inputMountKey, setInputMountKey] = useState(0);
 
   useEffect(() => {
-    if (value) {
+    if (!visible && value) {
       setSelectedDate(value);
       setSelectedTime({ hours: value.getHours(), minutes: value.getMinutes() });
     }
-  }, [value]);
+  }, [value, visible]);
+
+  useLayoutEffect(() => {
+    if (visible && !prevVisibleRef.current) {
+      if (value) {
+        setSelectedDate(value);
+        setSelectedTime({ hours: value.getHours(), minutes: value.getMinutes() });
+      }
+      setInputMountKey((k) => k + 1);
+    }
+    prevVisibleRef.current = visible;
+  }, [visible, value]);
+
+  const selectedCombined = useMemo(() => {
+    const d = new Date(selectedDate);
+    d.setHours(selectedTime.hours, selectedTime.minutes, 0, 0);
+    return d;
+  }, [selectedDate, selectedTime]);
 
   if (Platform.OS !== 'web') return null;
-
-  const formatDateForInput = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const formatTimeForInput = (h: number, m: number) =>
-    `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
   const handleConfirm = () => {
     const date = new Date(selectedDate);
@@ -75,37 +97,38 @@ const WebDatePickerModal = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={pickerStyles.overlay} onPress={onClose}>
-        <Pressable style={pickerStyles.content} onPress={(e) => e.stopPropagation()}>
-          <Text style={pickerStyles.title}>{mode === 'date' ? 'Select Date' : 'Select Date & Time'}</Text>
+      <View style={pickerStyles.overlay}>
+        <Pressable
+          style={pickerStyles.backdrop}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss date picker"
+        />
+        <Pressable
+          style={pickerStyles.content}
+          onPress={(e) => e.stopPropagation()}
+          {...(Platform.OS === 'web'
+            ? ({
+                onMouseDown: (e: { stopPropagation?: () => void }) => e.stopPropagation?.(),
+              } as object)
+            : {})}
+        >
+          <Text style={pickerStyles.title}>{title ?? (mode === 'date' ? 'Select Date' : 'Select Date & Time')}</Text>
           <View style={pickerStyles.row}>
             <Text style={pickerStyles.label}>Date</Text>
-            <TextInput
-              style={pickerStyles.input}
-              value={formatDateForInput(selectedDate)}
-              onChangeText={(t) => {
-                const d = new Date(t);
-                if (!isNaN(d.getTime())) setSelectedDate(d);
+            <InlineWebCalendar
+              key={`web-cal-${inputMountKey}`}
+              selected={selectedCombined}
+              minDate={minimumDate}
+              showTimeSelect={mode === 'datetime'}
+              onChange={(d) => {
+                setSelectedDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+                if (mode === 'datetime') {
+                  setSelectedTime({ hours: d.getHours(), minutes: d.getMinutes() });
+                }
               }}
-              {...(Platform.OS === 'web' && { type: 'date', min: minimumDate ? formatDateForInput(minimumDate) : undefined } as any)}
             />
           </View>
-          {mode === 'datetime' && (
-            <View style={pickerStyles.row}>
-              <Text style={pickerStyles.label}>Time</Text>
-              <TextInput
-                style={pickerStyles.input}
-                value={formatTimeForInput(selectedTime.hours, selectedTime.minutes)}
-                onChangeText={(t) => {
-                  const [h, m] = t.split(':').map(Number);
-                  if (!isNaN(h) && !isNaN(m) && h >= 0 && h < 24 && m >= 0 && m < 60) {
-                    setSelectedTime({ hours: h, minutes: m });
-                  }
-                }}
-                {...(Platform.OS === 'web' && { type: 'time' } as any)}
-              />
-            </View>
-          )}
           <View style={pickerStyles.actions}>
             <TouchableOpacity onPress={onClose} style={pickerStyles.cancelBtn}>
               <Text style={pickerStyles.cancelText}>Cancel</Text>
@@ -115,14 +138,21 @@ const WebDatePickerModal = ({
             </TouchableOpacity>
           </View>
         </Pressable>
-      </Pressable>
+      </View>
     </Modal>
   );
 };
 
 const pickerStyles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    zIndex: 0,
+  },
   content: {
+    zIndex: 1,
+    ...(Platform.OS === 'web' ? ({ position: 'relative' } as object) : {}),
     backgroundColor: theme.surface,
     borderRadius: 12,
     padding: 20,
@@ -166,6 +196,7 @@ export default function ManageEventScreen() {
   const { user } = useAuth();
   const { adminUser } = useAdminUser(user?.id ?? null);
   const isAdmin = adminUser?.role === 'admin';
+  const isOrgAdmin = adminUser?.is_org_admin === true;
   const [event, setEvent] = useState<EventWithOrganization | null>(null);
   const [orgUsers, setOrgUsers] = useState<OrgUserRow[]>([]);
   const [registrations, setRegistrations] = useState<Awaited<ReturnType<typeof getEventSwapRegistrations>>>([]);
@@ -186,6 +217,10 @@ export default function ManageEventScreen() {
   const [editGearDropOffEndTime, setEditGearDropOffEndTime] = useState<Date | null>(null);
   const [editGearDropOffPlace, setEditGearDropOffPlace] = useState('');
   const [showDatePicker, setShowDatePicker] = useState<'eventDate' | 'shopOpen' | 'shopClose' | 'gearDropOffStart' | 'gearDropOffEnd' | 'pickupStart' | 'pickupEnd' | null>(null);
+  const [orgCategoryChips, setOrgCategoryChips] = useState<Array<{ id: string; label: string }>>([]);
+  const [restrictItemCategories, setRestrictItemCategories] = useState(false);
+  const [selectedAllowedCategoryIds, setSelectedAllowedCategoryIds] = useState<string[]>([]);
+  const [savingItemTypeSettings, setSavingItemTypeSettings] = useState(false);
 
   const load = useCallback(async () => {
     if (!eventId) return;
@@ -193,6 +228,16 @@ export default function ManageEventScreen() {
       const ev = await getEvent(eventId);
       setEvent(ev);
       if (!ev) return;
+      const allowed = ev.settings?.allowedItemCategoryIds;
+      const hasLimit = Array.isArray(allowed) && allowed.length > 0;
+      setRestrictItemCategories(hasLimit);
+      setSelectedAllowedCategoryIds(hasLimit ? [...allowed!] : []);
+      try {
+        const tree = await getOrganizationCategories(ev.organizationId);
+        setOrgCategoryChips(flattenItemCategoriesForPicker(tree));
+      } catch {
+        setOrgCategoryChips([]);
+      }
       setEditName(ev.name);
       setEditStatus(ev.status);
       setEditItemsLocked(ev.itemsLocked ?? false);
@@ -283,10 +328,45 @@ export default function ManageEventScreen() {
     if (eventId) router.push(`/(event)/stations?id=${eventId}`);
   };
 
+  const saveItemTypeLimit = async () => {
+    if (!eventId || !event || !isAdmin) return;
+    if (restrictItemCategories && selectedAllowedCategoryIds.length === 0) {
+      Alert.alert('Select types', 'Choose at least one item category, or turn off the limit.');
+      return;
+    }
+    setSavingItemTypeSettings(true);
+    try {
+      const nextSettings: EventSettings = { ...(event.settings as EventSettings) };
+      if (restrictItemCategories && selectedAllowedCategoryIds.length > 0) {
+        nextSettings.allowedItemCategoryIds = [...selectedAllowedCategoryIds];
+      } else {
+        delete nextSettings.allowedItemCategoryIds;
+      }
+      const updated = await updateEvent(eventId, { settings: nextSettings });
+      setEvent((prev) => (prev ? { ...prev, ...updated } : null));
+      const saved = updated.settings?.allowedItemCategoryIds;
+      const limited = Array.isArray(saved) && saved.length > 0;
+      setRestrictItemCategories(limited);
+      setSelectedAllowedCategoryIds(limited ? [...saved!] : []);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to save item type settings');
+    } finally {
+      setSavingItemTypeSettings(false);
+    }
+  };
+
   const formatDate = (d: Date) =>
     new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(d);
   const formatTime = (d: Date) =>
     new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(d);
+  const formatDateTime = (d: Date) =>
+    new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(d);
 
   if (loading && !event) {
     return (
@@ -397,7 +477,7 @@ export default function ManageEventScreen() {
               <Text style={styles.detailLabel}>Gear drop-off</Text>
               <Text style={styles.detailValue}>
                 {(event.gearDropOffStartTime != null || event.gearDropOffEndTime != null)
-                  ? `${event.gearDropOffStartTime != null ? formatTime(event.gearDropOffStartTime) : '—'} – ${event.gearDropOffEndTime != null ? formatTime(event.gearDropOffEndTime) : '—'}`
+                  ? `${event.gearDropOffStartTime != null ? formatDateTime(event.gearDropOffStartTime) : '—'} – ${event.gearDropOffEndTime != null ? formatDateTime(event.gearDropOffEndTime) : '—'}`
                   : '—'}
                 {event.gearDropOffPlace?.trim() ? ` · ${event.gearDropOffPlace.trim()}` : ''}
               </Text>
@@ -413,6 +493,90 @@ export default function ManageEventScreen() {
               </Text>
             </View>
           )}
+        </View>
+      </View>
+
+      {isAdmin && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Item types at this event</Text>
+          <Text style={styles.sectionSubtitle}>
+            By default, every active category from your organization is available. Turn on the limit to offer only
+            selected types for registration and pre‑registered items.
+          </Text>
+          <View style={styles.card}>
+            <View style={styles.switchRow}>
+              <Text style={styles.detailLabel}>Limit to selected categories</Text>
+              <Switch
+                value={restrictItemCategories}
+                onValueChange={(v) => {
+                  setRestrictItemCategories(v);
+                  if (v && selectedAllowedCategoryIds.length === 0 && orgCategoryChips.length > 0) {
+                    setSelectedAllowedCategoryIds(orgCategoryChips.map((c) => c.id));
+                  }
+                }}
+              />
+            </View>
+            {!restrictItemCategories ? (
+              <Text style={styles.emptyText}>All organization categories are available for this event.</Text>
+            ) : orgCategoryChips.length === 0 ? (
+              <Text style={styles.emptyText}>No item categories found. Add categories under Organization settings.</Text>
+            ) : (
+              <>
+                <Text style={[styles.sectionSubtitle, { marginTop: 12 }]}>
+                  Tap to include or exclude a type for this event.
+                </Text>
+                <ScrollView
+                  style={styles.categoryChipScroll}
+                  contentContainerStyle={styles.categoryChipRow}
+                  nestedScrollEnabled
+                >
+                  {orgCategoryChips.map(({ id, label }) => {
+                    const on = selectedAllowedCategoryIds.includes(id);
+                    return (
+                      <TouchableOpacity
+                        key={id}
+                        style={[styles.categoryChip, on && styles.categoryChipActive]}
+                        onPress={() => {
+                          setSelectedAllowedCategoryIds((prev) =>
+                            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                          );
+                        }}
+                      >
+                        <Text
+                          style={[styles.categoryChipText, on && styles.categoryChipTextActive]}
+                          numberOfLines={2}
+                        >
+                          {label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            )}
+            <TouchableOpacity
+              style={[
+                styles.secondaryActionButton,
+                savingItemTypeSettings && styles.modalSaveButtonDisabled,
+              ]}
+              onPress={saveItemTypeLimit}
+              disabled={savingItemTypeSettings}
+            >
+              <Text style={styles.secondaryActionButtonText}>
+                {savingItemTypeSettings ? 'Saving…' : 'Save item types'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Seller app invite</Text>
+        <Text style={styles.sectionSubtitle}>
+          Share this link or QR so sellers can open the Gear Swap seller app and register for this event.
+        </Text>
+        <View style={styles.card}>
+          <SellerEventInvitePanel eventId={eventId} eventName={event.name} />
         </View>
       </View>
 
@@ -438,12 +602,12 @@ export default function ManageEventScreen() {
             ))
           )}
         </View>
-        {isAdmin && (
+        {isOrgAdmin && (
         <TouchableOpacity
           style={styles.linkButton}
-          onPress={() => router.push('/(dashboard)/users')}
+          onPress={() => router.push('/(dashboard)/staff-accounts')}
         >
-          <Text style={styles.linkButtonText}>Manage team members →</Text>
+          <Text style={styles.linkButtonText}>Manage staff accounts →</Text>
         </TouchableOpacity>
         )}
       </View>
@@ -650,6 +814,7 @@ export default function ManageEventScreen() {
                       setShowDatePicker(null);
                     }}
                     mode="date"
+                    title="Event date"
                   />
                   <WebDatePickerModal
                     visible={showDatePicker === 'shopOpen'}
@@ -660,6 +825,7 @@ export default function ManageEventScreen() {
                       setShowDatePicker(null);
                     }}
                     mode="datetime"
+                    title="Start date & time (shop opens)"
                     minimumDate={editEventDate || new Date()}
                   />
                   <WebDatePickerModal
@@ -671,6 +837,7 @@ export default function ManageEventScreen() {
                       setShowDatePicker(null);
                     }}
                     mode="datetime"
+                    title="End date & time (shop closes)"
                     minimumDate={editShopOpenTime || editEventDate || new Date()}
                   />
                   <WebDatePickerModal
@@ -682,7 +849,7 @@ export default function ManageEventScreen() {
                       setShowDatePicker(null);
                     }}
                     mode="datetime"
-                    minimumDate={editEventDate || new Date()}
+                    title="Gear drop-off – start"
                   />
                   <WebDatePickerModal
                     visible={showDatePicker === 'gearDropOffEnd'}
@@ -693,7 +860,8 @@ export default function ManageEventScreen() {
                       setShowDatePicker(null);
                     }}
                     mode="datetime"
-                    minimumDate={editGearDropOffStartTime || editEventDate || new Date()}
+                    title="Gear drop-off – end"
+                    minimumDate={editGearDropOffStartTime || undefined}
                   />
                   <WebDatePickerModal
                     visible={showDatePicker === 'pickupStart'}
@@ -704,6 +872,7 @@ export default function ManageEventScreen() {
                       setShowDatePicker(null);
                     }}
                     mode="datetime"
+                    title="Seller pickup window – start"
                     minimumDate={editShopCloseTime || editEventDate || new Date()}
                   />
                   <WebDatePickerModal
@@ -715,6 +884,7 @@ export default function ManageEventScreen() {
                       setShowDatePicker(null);
                     }}
                     mode="datetime"
+                    title="Seller pickup window – end"
                     minimumDate={editPickupStartTime || editShopCloseTime || editEventDate || new Date()}
                   />
                 </>
@@ -793,7 +963,6 @@ export default function ManageEventScreen() {
                         setShowDatePicker(null);
                       }
                     }}
-                    minimumDate={editEventDate || new Date()}
                   />
                   {Platform.OS === 'ios' && (
                     <TouchableOpacity style={styles.doneButton} onPress={() => setShowDatePicker(null)}>
@@ -814,7 +983,7 @@ export default function ManageEventScreen() {
                         setShowDatePicker(null);
                       }
                     }}
-                    minimumDate={editGearDropOffStartTime || editEventDate || new Date()}
+                    {...(editGearDropOffStartTime ? { minimumDate: editGearDropOffStartTime } : {})}
                   />
                   {Platform.OS === 'ios' && (
                     <TouchableOpacity style={styles.doneButton} onPress={() => setShowDatePicker(null)}>
@@ -1188,6 +1357,57 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   modalSaveText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.buttonText,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  categoryChipScroll: {
+    marginTop: 8,
+    maxHeight: 240,
+  },
+  categoryChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingVertical: 4,
+    paddingBottom: 8,
+  },
+  categoryChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: theme.background,
+    borderWidth: 1,
+    borderColor: theme.border,
+    maxWidth: 220,
+  },
+  categoryChipActive: {
+    backgroundColor: theme.primary + '22',
+    borderColor: theme.primary,
+  },
+  categoryChipText: {
+    fontSize: 14,
+    color: theme.textSecondary,
+  },
+  categoryChipTextActive: {
+    color: theme.primary,
+    fontWeight: '600',
+  },
+  secondaryActionButton: {
+    marginTop: 16,
+    alignSelf: 'flex-start',
+    backgroundColor: theme.button,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  secondaryActionButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: theme.buttonText,

@@ -2,7 +2,7 @@
 -- Used for items the org keeps after donation, abandonment, or unclaimed flows.
 
 CREATE TABLE organization_inventory_items (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   source_event_id UUID REFERENCES events(id) ON DELETE SET NULL,
   source_item_id UUID REFERENCES items(id) ON DELETE SET NULL,

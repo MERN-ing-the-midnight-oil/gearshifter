@@ -17,6 +17,47 @@ export type ItemStatus =
 
 export type EventStatus = 'active' | 'closed';
 
+/** Granular capabilities for organization admins (stored under permissions.admin). */
+export interface AdminCapabilities {
+  /** Create and manage staff accounts */
+  create_users: boolean;
+  /** Help users reset credentials / manage sign-in (future: password reset flows) */
+  change_passwords: boolean;
+  /** Create and manage swap events */
+  manage_events: boolean;
+  /** Organization profile, branding, and org-wide settings */
+  organization_settings: boolean;
+  /** Payouts, commissions, and sensitive financial reporting */
+  financial_reports: boolean;
+}
+
+export const ADMIN_CAPABILITY_KEYS = [
+  'create_users',
+  'change_passwords',
+  'manage_events',
+  'organization_settings',
+  'financial_reports',
+] as const;
+
+export type AdminCapabilityKey = (typeof ADMIN_CAPABILITY_KEYS)[number];
+
+export const DEFAULT_ADMIN_CAPABILITIES: AdminCapabilities = {
+  create_users: true,
+  change_passwords: true,
+  manage_events: true,
+  organization_settings: true,
+  financial_reports: true,
+};
+
+/** Short column titles for staff tables */
+export const ADMIN_CAPABILITY_LABELS: Record<AdminCapabilityKey, string> = {
+  create_users: 'Create users',
+  change_passwords: 'Change passwords',
+  manage_events: 'Events',
+  organization_settings: 'Org settings',
+  financial_reports: 'Financials',
+};
+
 /** Station-level permissions for org users. Org admins (is_org_admin) have full access. */
 export interface AdminPermissions {
   stations: {
@@ -25,7 +66,8 @@ export interface AdminPermissions {
     pickup: boolean;
     reports: boolean;
   };
-  // Future: action-level controls, e.g. pos_actions?: { process_refunds?: boolean }
+  /** When set on an org admin row, gates dashboard areas (defaults to all true if omitted). */
+  admin?: AdminCapabilities;
 }
 
 export type PaymentMethod = 'cash' | 'card' | 'check';
@@ -135,6 +177,8 @@ export interface Seller {
   phone: string;
   email?: string; // Optional for guest sellers, required for authenticated sellers
   qrCode: string;
+  /** Opaque dashboard token; exchange server-side for a Supabase session. */
+  accessToken?: string | null;
   authUserId?: string; // Link to auth.users if seller has an account
   isGuest: boolean; // True if seller doesn't have an authenticated account
   photoIdVerified: boolean; // True if org user verified photo ID (for guest sellers)
@@ -190,6 +234,8 @@ export interface EventSettings {
   allowSellerPriceDrops?: boolean;
   maxSellerPriceDrops?: number;
   minTimeBetweenSellerPriceDrops?: number; // in minutes
+  /** When non-empty, only these org item category UUIDs are offered for this event (seller register + add-item). */
+  allowedItemCategoryIds?: string[];
   [key: string]: unknown; // Allow other settings
 }
 
@@ -214,6 +260,8 @@ export interface Event {
   itemsLocked: boolean;
   /** When set, event is closed for donations; donate_if_unsold+for_sale items are donated, others show as not picked up when scanned. */
   donationDeclaredAt?: Date;
+  /** When set, event is archived (hidden from discovery; organizer list omits until un-archive exists). */
+  archivedAt?: Date;
   settings: EventSettings;
 }
 

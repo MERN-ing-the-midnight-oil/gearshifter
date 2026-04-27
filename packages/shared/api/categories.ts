@@ -1,6 +1,98 @@
 import { supabase } from './supabase';
 import type { ItemCategory } from '../types/models';
 
+function readAllowedItemCategoryIdsFromEventSettings(settings: unknown): Set<string> | null {
+  if (!settings || typeof settings !== 'object') return null;
+  const raw = (settings as { allowedItemCategoryIds?: unknown }).allowedItemCategoryIds;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const ids = raw.filter((x): x is string => typeof x === 'string' && x.length > 0);
+  return ids.length > 0 ? new Set(ids) : null;
+}
+
+/**
+ * Flatten org category tree for pickers (parent › child labels).
+ */
+export function flattenItemCategoriesForPicker(categories: ItemCategory[]): Array<{ id: string; label: string }> {
+  const out: Array<{ id: string; label: string }> = [];
+  const walk = (cats: ItemCategory[], prefix: string) => {
+    for (const c of cats) {
+      const label = prefix ? `${prefix} › ${c.name}` : c.name;
+      out.push({ id: c.id, label });
+      if (c.children?.length) walk(c.children, label);
+    }
+  };
+  walk(categories, '');
+  return out;
+}
+
+/**
+ * Limit a category tree to UUIDs allowed for an event (from `events.settings.allowedItemCategoryIds`).
+ */
+export function filterItemCategoriesByAllowedIds(
+  categories: ItemCategory[],
+  allowedIds: Set<string>
+): ItemCategory[] {
+  return categories
+    .map((c) => {
+      const children = c.children?.length
+        ? filterItemCategoriesByAllowedIds(c.children, allowedIds)
+        : [];
+      const selfAllowed = allowedIds.has(c.id);
+      if (selfAllowed) {
+        return { ...c, children: c.children };
+      }
+      if (children.length > 0) {
+        return { ...c, children };
+      }
+      return null;
+    })
+    .filter((c): c is ItemCategory => c !== null);
+}
+
+/**
+ * Limit a category tree to IDs the seller chose at swap registration (`_gf_planned_item_category_ids`).
+ * If a parent id was selected, that branch is kept in full; if only leaves were selected, only those branches remain.
+ */
+export function filterItemCategoriesBySellerPlan(
+  categories: ItemCategory[],
+  plannedIds: Set<string>
+): ItemCategory[] {
+  return categories
+    .map((c) => {
+      const children = c.children?.length
+        ? filterItemCategoriesBySellerPlan(c.children, plannedIds)
+        : [];
+      const self = plannedIds.has(c.id);
+      if (self) {
+        return { ...c, children: c.children };
+      }
+      if (children.length > 0) {
+        return { ...c, children };
+      }
+      return null;
+    })
+    .filter((c): c is ItemCategory => c !== null);
+}
+
+/**
+ * Org item categories for an event: full org tree unless the event restricts `settings.allowedItemCategoryIds`.
+ */
+export const getEventItemCategoryTree = async (eventId: string): Promise<ItemCategory[]> => {
+  const { data: row, error } = await supabase
+    .from('events')
+    .select('organization_id, settings')
+    .eq('id', eventId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!row) return [];
+
+  const tree = await getOrganizationCategories(row.organization_id);
+  const allowed = readAllowedItemCategoryIdsFromEventSettings(row.settings);
+  if (!allowed) return tree;
+  return filterItemCategoriesByAllowedIds(tree, allowed);
+};
+
 /**
  * Get field definitions for a specific category
  */

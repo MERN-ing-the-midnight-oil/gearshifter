@@ -6,22 +6,27 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   RefreshControl,
+  Platform,
+  Alert,
+  Pressable,
 } from 'react-native';
 import { StaffItemQrSection } from '../../components/StaffItemQrSection';
 import {
   useAuth,
   useEvents,
   getCurrentSeller,
+  useItems,
   useItemsByEvent,
   deleteSellerPendingItem,
   getSellerFacingItemTitle,
   formatSellerItemStatusLabel,
+  signOut,
   type Item,
   type ItemStatus,
   type Organization,
 } from 'shared';
 import { useRouter, useLocalSearchParams, useGlobalSearchParams } from 'expo-router';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { confirmAction } from '../../lib/alerts';
 
 /** Matches `recordSale`: seller gets listPrice × (1 − commissionRate). Rate is a decimal (e.g. 0.15 = 15%). */
@@ -75,9 +80,22 @@ export default function DashboardScreen() {
         : undefined;
   const [refreshing, setRefreshing] = useState(false);
   const [sellerName, setSellerName] = useState<string | null>(null);
+  const [sellerProfileEmail, setSellerProfileEmail] = useState<string | null>(null);
   const [sellerRecordId, setSellerRecordId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [eventPickerOpen, setEventPickerOpen] = useState(false);
+  const [allItemsOpen, setAllItemsOpen] = useState(true);
+
+  const sortedEvents = useMemo(
+    () => [...events].sort((a, b) => a.eventDate.getTime() - b.eventDate.getTime()),
+    [events]
+  );
+
+  const {
+    items: allSellerItems,
+    loading: allItemsLoading,
+    refetch: refetchAllSellerItems,
+    removeItemFromList: removeAllSellerItemFromList,
+  } = useItems(sellerRecordId);
 
   const {
     items: eventItems,
@@ -104,6 +122,7 @@ export default function DashboardScreen() {
         if (!isCancelled && seller) {
           const fullName = `${seller.firstName} ${seller.lastName}`.trim();
           setSellerName(fullName || null);
+          setSellerProfileEmail(seller.email?.trim() || null);
           setSellerRecordId(seller.id);
         }
       } catch (error) {
@@ -118,23 +137,59 @@ export default function DashboardScreen() {
     };
   }, [user?.id]);
 
-  // Auto-select the next upcoming event once events load
+  // Auto-select the next upcoming event once events load (chronological list)
   useEffect(() => {
-    if (!events || events.length === 0) return;
+    if (sortedEvents.length === 0) return;
     if (selectedEventId) return;
 
     const today = new Date();
-    const upcoming = events.find((event) => event.eventDate >= today);
-    const fallback = events[0];
-    setSelectedEventId((upcoming || fallback).id);
-  }, [events, selectedEventId]);
+    const upcoming = sortedEvents.find((event) => event.eventDate >= today);
+    setSelectedEventId((upcoming || sortedEvents[0]).id);
+  }, [sortedEvents, selectedEventId]);
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) || null;
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([refetchEvents(), refetchEventItems()]);
+    await Promise.all([refetchEvents(), refetchEventItems(), refetchAllSellerItems()]);
     setRefreshing(false);
+  };
+
+  const handleSignOut = async () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm('Are you sure you want to sign out?');
+      if (!confirmed) return;
+      try {
+        await signOut();
+        router.replace('/(auth)/login');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Failed to sign out';
+        window.alert(message);
+      }
+    } else {
+      Alert.alert(
+        'Sign Out',
+        'Are you sure you want to sign out?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Sign Out',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await signOut();
+                router.replace('/(auth)/login');
+              } catch (error: unknown) {
+                Alert.alert(
+                  'Error',
+                  error instanceof Error ? error.message : 'Failed to sign out'
+                );
+              }
+            },
+          },
+        ]
+      );
+    }
   };
 
   const handleDeletePendingItem = (itemId: string) => {
@@ -148,7 +203,8 @@ export default function DashboardScreen() {
       onConfirm: async () => {
         await deleteSellerPendingItem(itemId);
         removeEventItemFromList(itemId);
-        await refetchEventItems();
+        removeAllSellerItemFromList(itemId);
+        await Promise.all([refetchEventItems(), refetchAllSellerItems()]);
       },
     });
   };
@@ -189,102 +245,208 @@ export default function DashboardScreen() {
       }
     >
       <View style={styles.header}>
-        {sellerName && (
-          <Text style={styles.welcomeText}>Welcome, {sellerName}</Text>
-        )}
-        <Text style={styles.title}>Event View</Text>
+        <View style={styles.headerTop}>
+          <View style={styles.headerLeft}>
+            <Text style={styles.title}>Seller Dashboard</Text>
+          </View>
+          <View style={styles.headerRight}>
+            {sellerName ? (
+              <Text style={styles.headerAccountName} numberOfLines={1}>
+                {sellerName}
+              </Text>
+            ) : null}
+            {(user?.email || sellerProfileEmail) ? (
+              <Text style={styles.headerAccountEmail} numberOfLines={1}>
+                {user?.email ?? sellerProfileEmail}
+              </Text>
+            ) : null}
+            <Pressable
+              onPress={handleSignOut}
+              style={({ pressed }) => [
+                styles.signOutButton,
+                pressed && { opacity: 0.7 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+            >
+              <Text style={styles.signOutText}>Sign Out</Text>
+            </Pressable>
+          </View>
+        </View>
         <View
           style={[
             styles.eventDropdownShell,
             events.length === 0 && styles.eventDropdownShellDisabled,
           ]}
         >
-          <TouchableOpacity
-            style={styles.eventSelector}
-            onPress={() => setEventPickerOpen((open) => !open)}
-            disabled={events.length === 0}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.eventSelectorLabel}>Current Event</Text>
-            <View style={styles.eventSelectorRow}>
-              <Text style={styles.eventSelectorValue} numberOfLines={2}>
-                {selectedEvent
-                  ? selectedEvent.name
-                  : events.length === 0
-                    ? 'No events available'
-                    : 'Select an event'}
-              </Text>
-              <Text style={styles.eventSelectorIcon}>{eventPickerOpen ? '▲' : '▼'}</Text>
+          <View style={styles.eventCarouselHeader}>
+            <Text style={styles.eventCarouselLabel}>Your events</Text>
+          </View>
+          {events.length === 0 ? (
+            <View style={styles.eventCarouselEmpty}>
+              <Text style={styles.eventCarouselEmptyText}>No events available</Text>
             </View>
-          </TouchableOpacity>
-          {eventPickerOpen && events.length > 0 && (
-            <View style={styles.eventPickerList}>
-              {events.map((event, index) => (
-                <TouchableOpacity
-                  key={event.id}
-                  style={[
-                    styles.eventPickerItem,
-                    index === events.length - 1 && styles.eventPickerItemLast,
-                    event.id === selectedEventId && styles.eventPickerItemSelected,
-                  ]}
-                  onPress={() => {
-                    setSelectedEventId(event.id);
-                    setEventPickerOpen(false);
-                  }}
-                >
-                  <Text style={styles.eventPickerItemName}>{event.name}</Text>
-                  <Text style={styles.eventPickerItemDate}>{formatDate(event.eventDate)}</Text>
-                </TouchableOpacity>
-              ))}
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.eventCarouselContent}
+            >
+              {sortedEvents.map((event, index) => {
+                const selected = event.id === selectedEventId;
+                const d = event.eventDate;
+                const monthShort = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(d);
+                const dayNum = d.getDate();
+                const year = d.getFullYear();
+                const thisYear = new Date().getFullYear();
+                return (
+                  <TouchableOpacity
+                    key={event.id}
+                    style={[
+                      styles.eventTile,
+                      selected && styles.eventTileSelected,
+                      index < sortedEvents.length - 1 && styles.eventTileSpacing,
+                    ]}
+                    onPress={() => setSelectedEventId(event.id)}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${event.name}, ${formatDate(d)}`}
+                  >
+                    <Text style={styles.eventTileMonth}>{monthShort}</Text>
+                    <Text style={styles.eventTileDay}>{dayNum}</Text>
+                    {year !== thisYear ? (
+                      <Text style={styles.eventTileYear}>{year}</Text>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+          {selectedEvent && (
+            <View style={styles.eventSelectedDetails}>
+              <Text style={styles.eventDetailTitle} numberOfLines={3}>
+                {selectedEvent.name}
+              </Text>
+              <Text style={styles.eventInfoLabel}>Date</Text>
+              <Text style={styles.eventInfoValue}>{formatDate(selectedEvent.eventDate)}</Text>
+              {selectedEvent.shopOpenTime != null && (
+                <>
+                  <Text style={styles.eventInfoLabel}>Event starts</Text>
+                  <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopOpenTime)}</Text>
+                </>
+              )}
+              {selectedEvent.shopCloseTime != null && (
+                <>
+                  <Text style={styles.eventInfoLabel}>Event ends</Text>
+                  <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopCloseTime)}</Text>
+                </>
+              )}
+              {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null || (selectedEvent.gearDropOffPlace != null && selectedEvent.gearDropOffPlace.trim() !== '')) && (
+                <>
+                  <Text style={styles.eventInfoLabel}>Gear drop-off</Text>
+                  <Text style={styles.eventInfoValue}>
+                    {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null)
+                      ? `${selectedEvent.gearDropOffStartTime != null ? formatDateTime(selectedEvent.gearDropOffStartTime) : '—'} – ${selectedEvent.gearDropOffEndTime != null ? formatDateTime(selectedEvent.gearDropOffEndTime) : '—'}`
+                      : ''}
+                    {selectedEvent.gearDropOffPlace?.trim() ? (selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null ? ` · ${selectedEvent.gearDropOffPlace.trim()}` : selectedEvent.gearDropOffPlace.trim()) : ''}
+                  </Text>
+                </>
+              )}
+              {(selectedEvent.pickupStartTime != null || selectedEvent.pickupEndTime != null) ? (
+                <>
+                  <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
+                  <Text style={styles.eventInfoValue}>
+                    {selectedEvent.pickupStartTime != null ? formatDateTime(selectedEvent.pickupStartTime) : '—'}
+                    {' – '}
+                    {selectedEvent.pickupEndTime != null ? formatDateTime(selectedEvent.pickupEndTime) : '—'}
+                  </Text>
+                </>
+              ) : selectedEvent.shopCloseTime != null && (
+                <>
+                  <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
+                  <Text style={styles.eventInfoValue}>After {formatDateTime(selectedEvent.shopCloseTime)}</Text>
+                </>
+              )}
             </View>
           )}
         </View>
       </View>
 
-      {selectedEvent && (
+      {sellerRecordId && (
         <View style={styles.section}>
-          <View style={styles.eventCard}>
-            <Text style={styles.eventInfoLabel}>Date</Text>
-            <Text style={styles.eventInfoValue}>{formatDate(selectedEvent.eventDate)}</Text>
-            {selectedEvent.shopOpenTime != null && (
-              <>
-                <Text style={styles.eventInfoLabel}>Event starts</Text>
-                <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopOpenTime)}</Text>
-              </>
-            )}
-            {selectedEvent.shopCloseTime != null && (
-              <>
-                <Text style={styles.eventInfoLabel}>Event ends</Text>
-                <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopCloseTime)}</Text>
-              </>
-            )}
-            {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null || (selectedEvent.gearDropOffPlace != null && selectedEvent.gearDropOffPlace.trim() !== '')) && (
-              <>
-                <Text style={styles.eventInfoLabel}>Gear drop-off</Text>
-                <Text style={styles.eventInfoValue}>
-                  {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null)
-                    ? `${selectedEvent.gearDropOffStartTime != null ? formatDateTime(selectedEvent.gearDropOffStartTime) : '—'} – ${selectedEvent.gearDropOffEndTime != null ? formatDateTime(selectedEvent.gearDropOffEndTime) : '—'}`
-                    : ''}
-                  {selectedEvent.gearDropOffPlace?.trim() ? (selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null ? ` · ${selectedEvent.gearDropOffPlace.trim()}` : selectedEvent.gearDropOffPlace.trim()) : ''}
+          <TouchableOpacity
+            style={styles.allItemsHeader}
+            onPress={() => setAllItemsOpen((o) => !o)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: allItemsOpen }}
+            accessibilityLabel={
+              allItemsOpen
+                ? 'Collapse list of all items you are selling'
+                : 'Expand list of all items you are selling'
+            }
+          >
+            <View style={styles.allItemsHeaderTextBlock}>
+              <Text style={styles.allItemsTitle}>All items you are selling</Text>
+              <Text style={styles.allItemsSubcaption}>
+                Across every event ({allSellerItems.length})
+              </Text>
+            </View>
+            <Text style={styles.allItemsChevron}>{allItemsOpen ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {allItemsOpen &&
+            (allItemsLoading && !refreshing ? (
+              <View style={styles.itemsCard}>
+                <View style={styles.itemsLoadingRow}>
+                  <ActivityIndicator size="small" color="#007AFF" />
+                  <Text style={styles.itemsLoadingText}>Loading all items…</Text>
+                </View>
+              </View>
+            ) : allSellerItems.length === 0 ? (
+              <View style={styles.itemsCard}>
+                <Text style={styles.itemsEmptyText}>
+                  You do not have any items yet. Pre-register an item for an event to see it here.
                 </Text>
-              </>
-            )}
-            {(selectedEvent.pickupStartTime != null || selectedEvent.pickupEndTime != null) ? (
-              <>
-                <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
-                <Text style={styles.eventInfoValue}>
-                  {selectedEvent.pickupStartTime != null ? formatDateTime(selectedEvent.pickupStartTime) : '—'}
-                  {' – '}
-                  {selectedEvent.pickupEndTime != null ? formatDateTime(selectedEvent.pickupEndTime) : '—'}
-                </Text>
-              </>
-            ) : selectedEvent.shopCloseTime != null && (
-              <>
-                <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
-                <Text style={styles.eventInfoValue}>After {formatDateTime(selectedEvent.shopCloseTime)}</Text>
-              </>
-            )}
-          </View>
+              </View>
+            ) : (
+              <View style={styles.itemsListContainer}>
+                {allSellerItems.map((item) => {
+                  const itemEvent = events.find((e) => e.id === item.eventId) || null;
+                  return (
+                    <View key={item.id}>
+                      {itemEvent ? (
+                        <Text style={styles.allItemsEventLabel} numberOfLines={2}>
+                          {itemEvent.name}
+                        </Text>
+                      ) : (
+                        <Text style={styles.allItemsEventLabelMuted} numberOfLines={1}>
+                          Event (loading…)
+                        </Text>
+                      )}
+                      <ItemSummaryRow
+                        item={item}
+                        organization={itemEvent?.organization}
+                        formatDate={formatDate}
+                        onDeletePending={
+                          item.status === 'pending'
+                            ? () => handleDeletePendingItem(item.id)
+                            : undefined
+                        }
+                        onEditPending={
+                          item.status === 'pending' && itemEvent
+                            ? () =>
+                                router.push(
+                                  `/event/${itemEvent.id}/add-item?itemId=${encodeURIComponent(item.id)}`
+                                )
+                            : undefined
+                        }
+                      />
+                    </View>
+                  );
+                })}
+              </View>
+            ))}
         </View>
       )}
 
@@ -481,11 +643,46 @@ const styles = StyleSheet.create({
     paddingTop: 40,
     backgroundColor: '#FFFFFF',
   },
-  welcomeText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#444',
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     marginBottom: 4,
+  },
+  headerLeft: {
+    flex: 1,
+    marginRight: 12,
+    minWidth: 0,
+  },
+  headerRight: {
+    alignItems: 'flex-end',
+    maxWidth: '46%',
+    minWidth: 0,
+  },
+  headerAccountName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#555',
+    textAlign: 'right',
+    marginBottom: 2,
+  },
+  headerAccountEmail: {
+    fontSize: 11,
+    color: '#888',
+    textAlign: 'right',
+    marginBottom: 8,
+  },
+  signOutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(220, 53, 69, 0.12)',
+    alignSelf: 'flex-end',
+  },
+  signOutText: {
+    fontSize: 14,
+    color: '#DC3545',
+    fontWeight: '600',
   },
   title: {
     fontSize: 32,
@@ -507,15 +704,44 @@ const styles = StyleSheet.create({
     color: '#1A1A1A',
     marginBottom: 12,
   },
-  eventCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+  allItemsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  allItemsHeaderTextBlock: {
+    flex: 1,
+    marginRight: 8,
+    minWidth: 0,
+  },
+  allItemsTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1A1A1A',
+  },
+  allItemsSubcaption: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  allItemsChevron: {
+    fontSize: 16,
+    color: '#666',
+    paddingLeft: 8,
+    paddingVertical: 4,
+  },
+  allItemsEventLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0057C2',
+    marginBottom: 8,
+  },
+  allItemsEventLabelMuted: {
+    fontSize: 13,
+    color: '#888',
+    marginBottom: 8,
   },
   eventHeader: {
     flexDirection: 'row',
@@ -587,58 +813,84 @@ const styles = StyleSheet.create({
   eventDropdownShellDisabled: {
     opacity: 0.75,
   },
-  eventSelector: {
+  eventCarouselHeader: {
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
-  eventSelectorLabel: {
+  eventCarouselLabel: {
     fontSize: 13,
     color: '#888',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 4,
   },
-  eventSelectorRow: {
+  eventCarouselEmpty: {
+    paddingHorizontal: 14,
+    paddingBottom: 16,
+  },
+  eventCarouselEmptyText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#888',
+  },
+  eventCarouselContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingBottom: 12,
   },
-  eventSelectorValue: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1A1A1A',
+  eventTileSpacing: {
+    marginRight: 10,
   },
-  eventSelectorIcon: {
-    fontSize: 16,
+  eventTile: {
+    width: 78,
+    height: 78,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#E2E6EA',
+    backgroundColor: '#FAFBFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
+  eventTileSelected: {
+    borderColor: '#007AFF',
+    backgroundColor: '#E8F4FF',
+  },
+  eventTileMonth: {
+    fontSize: 11,
+    fontWeight: '700',
     color: '#666',
-    marginLeft: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
-  eventPickerList: {
-    borderTopWidth: 1,
-    borderTopColor: '#E5E5E5',
-    paddingVertical: 4,
-  },
-  eventPickerItem: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  eventPickerItemLast: {
-    borderBottomWidth: 0,
-  },
-  eventPickerItemSelected: {
-    backgroundColor: '#F0F8FF',
-  },
-  eventPickerItemName: {
-    fontSize: 16,
-    fontWeight: '500',
+  eventTileDay: {
+    fontSize: 26,
+    fontWeight: '800',
     color: '#1A1A1A',
-  },
-  eventPickerItemDate: {
-    fontSize: 13,
-    color: '#666',
+    lineHeight: 30,
     marginTop: 2,
+  },
+  eventTileYear: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#888',
+    marginTop: 2,
+  },
+  eventSelectedDetails: {
+    paddingHorizontal: 14,
+    paddingBottom: 16,
+    paddingTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#ECECEC',
+    backgroundColor: '#FAFBFC',
+  },
+  eventDetailTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0057C2',
+    lineHeight: 28,
+    marginBottom: 4,
   },
   registerItemHint: {
     fontSize: 14,

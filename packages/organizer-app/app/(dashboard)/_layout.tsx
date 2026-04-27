@@ -22,7 +22,7 @@ export default function DashboardLayout() {
       <Stack.Screen name="gear-tags" options={{ title: 'Gear Tags' }} />
       <Stack.Screen name="price-reduction-settings" options={{ title: 'Price Reductions' }} />
       <Stack.Screen name="swap-registration-fields" options={{ title: 'Seller Registration Form' }} />
-      <Stack.Screen name="users" options={{ title: 'Team Members' }} />
+      <Stack.Screen name="staff-accounts" options={{ title: 'Staff Accounts' }} />
       <Stack.Screen name="post-event-inventory" options={{ title: 'Post-event inventory' }} />
     </Stack>
   );

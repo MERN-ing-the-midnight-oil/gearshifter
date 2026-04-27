@@ -13,6 +13,7 @@
     "@expo/metro-runtime": "~6.1.2",
     "@supabase/supabase-js": "^2.39.0",
     "expo": "~54.0.0",
+    "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.13",
     "expo-device": "~8.0.10",
     "expo-linking": "~8.0.11",

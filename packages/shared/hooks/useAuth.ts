@@ -3,24 +3,31 @@ import { getCurrentUser, getSession, signInWithEmail } from '../api/auth';
 import { supabase } from '../api/supabase';
 import type { User } from '@supabase/supabase-js';
 
-// Development auto-login: when __DEV__ and no session, log in as a test user.
-// Seller app (EXPO_PUBLIC_APP_VARIANT=seller): uses EXPO_PUBLIC_DEV_* or default test seller.
-// Organizer app: uses EXPO_PUBLIC_DEV_* or fallback below.
+// Development auto-login: only when EXPO_PUBLIC_DEV_AUTO_LOGIN=true|1 (otherwise you see the login page).
+// Set EXPO_PUBLIC_DEV_AUTO_LOGIN_EMAIL + PASSWORD, or rely on defaults per app variant.
+// Organizer default: Axel Admin (yarn create:axel-admin). Seller: seller@test.com.
 const DEV_AUTO_LOGIN_SELLER = {
   email: 'seller@test.com',
   password: 'testpass123',
 };
 const DEV_AUTO_LOGIN_ORGANIZER = {
-  email: 'cryptic.colors@gmail.com',
+  email: 'axel.admin@bellingham-skiswap.test',
   password: 'asdfasdf',
 };
 
+function isDevAutoLoginEnabled(): boolean {
+  const v = typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_DEV_AUTO_LOGIN : undefined;
+  return v === 'true' || v === '1';
+}
+
 function getDevAutoLoginCredentials(): { email: string; password: string } | null {
+  if (!isDevAutoLoginEnabled()) return null;
+  const appVariant = typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_APP_VARIANT;
+  // Seller app uses phone OTP; do not silently sign in with email/password in dev.
+  if (appVariant === 'seller') return null;
   const envEmail = typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_DEV_AUTO_LOGIN_EMAIL;
   const envPassword = typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_DEV_AUTO_LOGIN_PASSWORD;
   if (envEmail && envPassword) return { email: envEmail, password: envPassword };
-  const appVariant = typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_APP_VARIANT;
-  if (appVariant === 'seller') return DEV_AUTO_LOGIN_SELLER;
   return DEV_AUTO_LOGIN_ORGANIZER;
 }
 

@@ -1,5 +1,5 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { useEvent } from 'shared';
+import { useEvent, isSellerSwapRegistrationWindowOpen } from 'shared';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from 'shared';
 
@@ -48,13 +48,7 @@ export default function EventDetailScreen() {
     return styles[status] || { backgroundColor: '#6C757D' };
   };
 
-  const isRegistrationOpen = () => {
-    if (!event) return false;
-    const now = new Date();
-    const openDate = new Date(event.registrationOpenDate);
-    const closeDate = new Date(event.registrationCloseDate);
-    return now >= openDate && now <= closeDate && event.status === 'registration';
-  };
+  const isRegistrationOpen = () => (event ? isSellerSwapRegistrationWindowOpen(event) : false);
 
   if (loading) {
     return (
@@ -190,6 +184,39 @@ export default function EventDetailScreen() {
           </View>
         )}
 
+        {isRegistrationOpen() && !user && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Seller account</Text>
+            <Text style={styles.guestHint}>
+              Sign in or create an account to register for this swap and pre-register items.
+            </Text>
+            <View style={styles.actionSection}>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={() =>
+                  router.push({
+                    pathname: '/(auth)/login',
+                    params: { redirect: `/event/${event.id}/register` },
+                  })
+                }
+              >
+                <Text style={styles.primaryButtonText}>Sign in</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() =>
+                  router.push({
+                    pathname: '/(auth)/signup',
+                    params: { redirect: `/event/${event.id}/register` },
+                  })
+                }
+              >
+                <Text style={styles.secondaryButtonText}>Create account</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {isRegistrationOpen() && user && (
           <View style={styles.actionSection}>
             <TouchableOpacity
@@ -312,6 +339,12 @@ const styles = StyleSheet.create({
   registrationClosedText: {
     fontSize: 14,
     color: '#E65100',
+  },
+  guestHint: {
+    fontSize: 15,
+    color: '#666',
+    lineHeight: 22,
+    marginBottom: 8,
   },
   actionSection: {
     marginTop: 8,

@@ -8,6 +8,59 @@ import type { GearTagTemplate } from '../types/models';
 /** Organizer app scheme (see packages/organizer-app/app.json). */
 export const ORGANIZER_APP_SCHEME = 'organizer';
 
+/** Seller app scheme (see packages/seller-app/app.json). */
+export const SELLER_APP_SCHEME = 'seller';
+
+/** Opens the seller app on the event detail route (`app/event/[id]/index.tsx`). */
+export type SellerEventDeepLinkScreen = 'event' | 'register';
+
+/**
+ * Deep link for sellers to open an event in the Seller app (Expo Router).
+ * Uses an empty host (`seller:///…`) so the path matches file routes `/event/:id` and `/event/:id/register`.
+ */
+export function buildSellerEventDeepLink(
+  eventId: string,
+  screen: SellerEventDeepLinkScreen = 'event'
+): string {
+  if (screen === 'register') {
+    return `${SELLER_APP_SCHEME}:///event/${eventId}/register`;
+  }
+  return `${SELLER_APP_SCHEME}:///event/${eventId}`;
+}
+
+/**
+ * Same routes as {@link buildSellerEventDeepLink}, but as an absolute http(s) URL for Expo web
+ * (e.g. `http://localhost:8082/event/<id>/register` when developing with `yarn dev:both`).
+ */
+export function buildSellerEventWebInviteUrl(
+  webOrigin: string,
+  eventId: string,
+  screen: SellerEventDeepLinkScreen = 'event'
+): string {
+  const origin = webOrigin.replace(/\/$/, '');
+  const path = screen === 'register' ? `/event/${eventId}/register` : `/event/${eventId}`;
+  return `${origin}${path}`;
+}
+
+/**
+ * Parse seller event deep link from pasted text (custom scheme only).
+ */
+export function parseSellerEventDeepLink(
+  raw: string
+): { eventId: string; screen: SellerEventDeepLinkScreen } | null {
+  const t = raw.trim();
+  const prefix = `${SELLER_APP_SCHEME}:///event/`;
+  if (!t.startsWith(prefix)) return null;
+  const rest = t.slice(prefix.length).replace(/\/$/, '');
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  const eventId = parts[0];
+  if (!eventId) return null;
+  const screen: SellerEventDeepLinkScreen =
+    parts[1] === 'register' ? 'register' : 'event';
+  return { eventId, screen };
+}
+
 /**
  * Path segment (no leading slash) for Expo Router route `/(event)/check-in/item-details`.
  * Groups like `(event)` are omitted from the public URL.

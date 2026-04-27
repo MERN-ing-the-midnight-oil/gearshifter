@@ -1,0 +1,159 @@
+:root {
+  --bg: #0c1210;
+  --bg-elevated: #141c19;
+  --surface: #1a2420;
+  --text: #e8f0ec;
+  --text-muted: #8fa399;
+  --accent: #3dd6a5;
+  --accent-dim: #2a9d7a;
+  --warm: #f4a261;
+  --border: rgba(61, 214, 165, 0.12);
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-display: "Outfit", var(--font-sans);
+  --radius: 14px;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  background-image:
+    radial-gradient(ellipse 120% 80% at 50% -20%, rgba(61, 214, 165, 0.15), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 50%, rgba(244, 162, 97, 0.06), transparent);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+}
+
+header {
+  text-align: center;
+  padding: clamp(2rem, 8vw, 4rem) 0 2rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  margin-bottom: 1.25rem;
+  background: rgba(61, 214, 165, 0.06);
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(2.25rem, 6vw, 3.25rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  margin: 0 0 1rem;
+}
+
+.lead {
+  font-size: 1.15rem;
+  color: var(--text-muted);
+  max-width: 34ch;
+  margin: 0 auto;
+}
+
+main {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: clamp(1.5rem, 4vw, 2rem);
+  box-shadow: var(--shadow);
+}
+
+main h2 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+  color: var(--text);
+}
+
+main h2:not(:first-of-type) {
+  margin-top: 2rem;
+}
+
+ul {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--text-muted);
+}
+
+li {
+  margin-bottom: 0.65rem;
+}
+
+li strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.footnote {
+  margin-top: 1.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+footer {
+  text-align: center;
+  padding: 2.5rem 0 3rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+footer .links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+footer .links a {
+  color: var(--text-muted);
+}
+
+footer .links a:hover {
+  color: var(--accent);
+}
+
+.creator {
+  opacity: 0.85;
+}

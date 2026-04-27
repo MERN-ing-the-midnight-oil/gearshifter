@@ -1,4 +1,6 @@
-import { View, Text, Image, TouchableOpacity, StyleSheet, Share } from 'react-native';
+import { useState } from 'react';
+import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 
 const QR_DISPLAY = 112;
 
@@ -12,21 +14,28 @@ type Props = {
 /**
  * Compact staff-facing QR for the organizer deep link stored on `item.qrCode`.
  */
-export function StaffItemQrSection({ qrCode, itemNumber, show }: Props) {
+export function StaffItemQrSection({ qrCode, itemNumber: _itemNumber, show }: Props) {
+  const [copied, setCopied] = useState(false);
+
   if (!show || !qrCode?.trim()) return null;
 
-  const share = () => {
-    Share.share({
-      message: `Item #${itemNumber} — staff QR (Gear Swap Organizer):\n${qrCode}`,
-      title: 'Staff QR for item',
-    }).catch(() => {});
+  const copyLink = async () => {
+    const url = qrCode.trim();
+    try {
+      await Clipboard.setStringAsync(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard unavailable (e.g. some web contexts)
+    }
   };
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>Staff check-in QR</Text>
       <Text style={styles.hint}>
-        Organizers scan this in the Gear Swap Organizer app at check-in.
+        Organizers scan this in the Gear Swap Organizer app at check-in. For local testing, copy the link and paste it
+        into the organizer check-in flow.
       </Text>
       <Image
         accessibilityLabel="QR code for event staff"
@@ -36,8 +45,8 @@ export function StaffItemQrSection({ qrCode, itemNumber, show }: Props) {
         style={styles.image}
         resizeMode="contain"
       />
-      <TouchableOpacity onPress={share} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-        <Text style={styles.share}>Share link</Text>
+      <TouchableOpacity onPress={copyLink} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <Text style={styles.share}>{copied ? 'Copied' : 'Copy link to clipboard'}</Text>
       </TouchableOpacity>
     </View>
   );

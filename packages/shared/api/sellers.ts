@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import type { Seller } from '../types/models';
 import { generateSellerQRCode } from '../utils/qrCode';
+import { sellerPlaceholderEmailForAuthUserId } from '../utils/phone';
+import { generateSecureAccessToken } from '../utils/accessToken';
 
 /**
  * Get current seller profile
@@ -10,12 +12,9 @@ export const getCurrentSeller = async (userId: string): Promise<Seller | null> =
     .from('sellers')
     .select('*')
     .eq('auth_user_id', userId) // Use auth_user_id to find seller by auth user
-    .single();
+    .maybeSingle();
 
-  if (error) {
-    if (error.code === 'PGRST116') return null; // Not found
-    throw error;
-  }
+  if (error) throw error;
   return data ? mapSellerFromDb(data) : null;
 };
 
@@ -37,6 +36,7 @@ export const createSeller = async (
   
   // Generate QR code for seller (format: SELLER-{sellerId} for org users to scan)
   const qrCode = generateSellerQRCode(sellerId);
+  const accessToken = generateSecureAccessToken();
 
   const { data, error } = await supabase
     .from('sellers')
@@ -48,6 +48,7 @@ export const createSeller = async (
       phone: sellerData.phone,
       email: sellerData.email, // Permanent, tied to account
       qr_code: qrCode,
+      access_token: accessToken,
       is_guest: false, // This seller has an authenticated account
     })
     .select()
@@ -98,6 +99,7 @@ export const createGuestSeller = async (
 
   // Generate QR code for seller
   const qrCode = generateSellerQRCode(sellerId);
+  const accessToken = generateSecureAccessToken();
 
   const { data, error } = await supabase
     .from('sellers')
@@ -115,6 +117,7 @@ export const createGuestSeller = async (
       zip_code: sellerData.zipCode,
       country: sellerData.country || 'USA',
       qr_code: qrCode,
+      access_token: accessToken,
       is_guest: true,
       photo_id_verified: true, // Verified during check-in
       photo_id_verified_by: sellerData.photoIdVerifiedBy,
@@ -152,11 +155,23 @@ export const linkGuestSellerToAccount = async (
   sellerId: string,
   authUserId: string
 ): Promise<Seller> => {
+  const { data: existing, error: readErr } = await supabase
+    .from('sellers')
+    .select('access_token')
+    .eq('id', sellerId)
+    .maybeSingle();
+  if (readErr) throw readErr;
+  const accessToken =
+    existing?.access_token && String(existing.access_token).trim().length >= 16
+      ? String(existing.access_token).trim()
+      : generateSecureAccessToken();
+
   const { data, error } = await supabase
     .from('sellers')
     .update({
       auth_user_id: authUserId,
       is_guest: false,
+      access_token: accessToken,
     })
     .eq('id', sellerId)
     .select()
@@ -264,6 +279,100 @@ export const getSellerByPhone = async (phone: string): Promise<Seller | null> =>
 };
 
 /**
+ * Assign `access_token` for legacy seller rows missing one (RLS: own seller row).
+ */
+export const mintSellerAccessTokenIfMissing = async (authUserId: string): Promise<string | null> => {
+  const seller = await getCurrentSeller(authUserId);
+  if (!seller) return null;
+  if (seller.accessToken) return seller.accessToken;
+
+  let token = generateSecureAccessToken();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { error } = await supabase
+      .from('sellers')
+      .update({ access_token: token })
+      .eq('auth_user_id', authUserId);
+
+    if (!error) return token;
+    if (error.code === '23505' || error.message?.includes('duplicate')) {
+      token = generateSecureAccessToken();
+      continue;
+    }
+    throw error;
+  }
+  throw new Error('Could not assign seller access token');
+};
+
+export type ResolveSellerAfterPhoneSignInResult =
+  | { kind: 'existing'; seller: Seller }
+  | { kind: 'linked_guest'; seller: Seller }
+  | { kind: 'needs_profile' };
+
+/**
+ * After Supabase phone OTP establishes a session, attach an existing seller row or
+ * decide that profile fields are still required (new self-serve seller).
+ *
+ * Walk-up guest rows (same phone) are linked when RLS allows (see migration
+ * `20260425160000_seller_guest_phone_claim_rls.sql`).
+ */
+export const resolveSellerAfterPhoneSignIn = async (
+  authUserId: string,
+  phoneE164: string
+): Promise<ResolveSellerAfterPhoneSignInResult> => {
+  const existingByAuth = await getCurrentSeller(authUserId);
+  if (existingByAuth) {
+    return { kind: 'existing', seller: existingByAuth };
+  }
+
+  const byPhone = await getSellerByPhone(phoneE164);
+  if (!byPhone) {
+    return { kind: 'needs_profile' };
+  }
+
+  if (byPhone.isGuest && !byPhone.authUserId) {
+    const linked = await linkGuestSellerToAccount(byPhone.id, authUserId);
+    return { kind: 'linked_guest', seller: linked };
+  }
+
+  if (byPhone.authUserId && byPhone.authUserId !== authUserId) {
+    throw new Error('This phone number is already linked to another account.');
+  }
+
+  if (!byPhone.isGuest) {
+    return { kind: 'existing', seller: byPhone };
+  }
+
+  throw new Error('Could not link this phone number to your account. Please contact support.');
+};
+
+export interface CreateSellerAfterPhoneProfileInput {
+  authUserId: string;
+  /** E.164 from the verified phone session */
+  phoneE164: string;
+  firstName: string;
+  lastName: string;
+  /** Optional; if empty, a deterministic placeholder is used (`sellers.email` is NOT NULL). */
+  contactEmail?: string | null;
+}
+
+export const createSellerAfterPhoneProfile = async (
+  input: CreateSellerAfterPhoneProfileInput
+): Promise<Seller> => {
+  const trimmedEmail = input.contactEmail?.trim();
+  const email =
+    trimmedEmail && trimmedEmail.includes('@')
+      ? trimmedEmail.toLowerCase()
+      : sellerPlaceholderEmailForAuthUserId(input.authUserId);
+
+  return createSeller(input.authUserId, {
+    firstName: input.firstName.trim(),
+    lastName: input.lastName.trim(),
+    phone: input.phoneE164,
+    email,
+  });
+};
+
+/**
  * Create a full seller account via Edge Function (auth user + sellers row + QR code).
  * Used by organizer app for walk-up registration. Requires service role in the function.
  */
@@ -328,6 +437,7 @@ function mapSellerFromDb(dbSeller: any): Seller {
     phone: dbSeller.phone,
     email: dbSeller.email, // Optional for guest sellers
     qrCode: dbSeller.qr_code,
+    accessToken: dbSeller.access_token ?? null,
     authUserId: dbSeller.auth_user_id,
     isGuest: dbSeller.is_guest || false,
     photoIdVerified: dbSeller.photo_id_verified || false,

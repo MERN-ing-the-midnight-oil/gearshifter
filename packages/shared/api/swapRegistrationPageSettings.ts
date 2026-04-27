@@ -11,9 +11,9 @@ export const getSwapRegistrationPageSettings = async (
     .from('swap_registration_page_settings')
     .select('*')
     .eq('organization_id', organizationId)
-    .single();
+    .maybeSingle();
 
-  if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows returned
+  if (error) throw error;
   return data ? mapPageSettingsFromDb(data) : null;
 };
 
@@ -28,7 +28,7 @@ export const getEventSwapRegistrationPageSettings = async (
     .from('events')
     .select('organization_id')
     .eq('id', eventId)
-    .single();
+    .maybeSingle();
 
   if (eventError) throw eventError;
   if (!event) return null;

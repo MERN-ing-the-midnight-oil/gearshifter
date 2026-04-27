@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import type { Event, EventStatus, EventSettings, Organization, ItemStatus } from '../types/models';
 import { isItemDonatedToOrg } from '../constants/statuses';
+import { isEventArchiveEligible } from '../utils/eventArchiveEligibility';
+import { ensureDefaultSwapRegistrationFieldsForOrganization } from './swapRegistrationFields';
 
 export interface EventWithOrganization extends Event {
   organization?: Organization;
@@ -22,6 +24,7 @@ export const getEvents = async (): Promise<EventWithOrganization[]> => {
         vendor_commission_rate
       )
     `)
+    .is('archived_at', null)
     .order('event_date', { ascending: true });
 
   if (error) throw error;
@@ -55,6 +58,7 @@ export const getUpcomingEvents = async (): Promise<EventWithOrganization[]> => {
         vendor_commission_rate
       )
     `)
+    .is('archived_at', null)
     .eq('status', 'active')
     .gte('event_date', today)
     .order('event_date', { ascending: true })
@@ -96,7 +100,7 @@ export const getEvent = async (eventId: string): Promise<EventWithOrganization |
       )
     `)
     .eq('id', eventId)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
   return data ? mapEventWithOrgFromDb(data) : null;
@@ -131,6 +135,7 @@ export const getCurrentEventForSeller = async (sellerId: string): Promise<Event 
   const { data: nextEvent, error: eventError } = await supabase
     .from('events')
     .select('*')
+    .is('archived_at', null)
     .gte('event_date', now.split('T')[0])
     .order('event_date', { ascending: true })
     .limit(1)
@@ -264,6 +269,7 @@ export const getOrganizationEvents = async (adminUserId: string): Promise<EventW
       )
     `)
     .eq('organization_id', adminUser.organization_id)
+    .is('archived_at', null)
     .order('event_date', { ascending: false });
 
   if (error) throw error;
@@ -314,6 +320,9 @@ export const createEvent = async (
     serializedSettings.priceDropTimes = (serializedSettings.priceDropTimes as Date[]).map(d => d.toISOString());
   }
 
+  // Omit pickup / gear drop-off keys when unset so PostgREST does not reject inserts on
+  // databases that have not yet run migrations adding those columns (PGRST204).
+  const gearPlace = eventData.gearDropOffPlace?.trim();
   const insertData = {
     organization_id: organizationId,
     name: eventData.name,
@@ -322,11 +331,11 @@ export const createEvent = async (
     registration_close_date: eventData.registrationCloseDate ? eventData.registrationCloseDate.toISOString().split('T')[0] : null,
     shop_open_time: eventData.shopOpenTime ? eventData.shopOpenTime.toISOString() : null,
     shop_close_time: eventData.shopCloseTime ? eventData.shopCloseTime.toISOString() : null,
-    pickup_start_time: eventData.pickupStartTime ? eventData.pickupStartTime.toISOString() : null,
-    pickup_end_time: eventData.pickupEndTime ? eventData.pickupEndTime.toISOString() : null,
-    gear_drop_off_start_time: eventData.gearDropOffStartTime ? eventData.gearDropOffStartTime.toISOString() : null,
-    gear_drop_off_end_time: eventData.gearDropOffEndTime ? eventData.gearDropOffEndTime.toISOString() : null,
-    gear_drop_off_place: eventData.gearDropOffPlace?.trim() || null,
+    ...(eventData.pickupStartTime && { pickup_start_time: eventData.pickupStartTime.toISOString() }),
+    ...(eventData.pickupEndTime && { pickup_end_time: eventData.pickupEndTime.toISOString() }),
+    ...(eventData.gearDropOffStartTime && { gear_drop_off_start_time: eventData.gearDropOffStartTime.toISOString() }),
+    ...(eventData.gearDropOffEndTime && { gear_drop_off_end_time: eventData.gearDropOffEndTime.toISOString() }),
+    ...(gearPlace ? { gear_drop_off_place: gearPlace } : {}),
     price_drop_time: eventData.priceDropTime ? eventData.priceDropTime.toISOString() : null,
     status: eventData.status || 'active',
     settings: serializedSettings,
@@ -348,6 +357,15 @@ export const createEvent = async (
       code: error.code,
     });
     throw error;
+  }
+
+  try {
+    await ensureDefaultSwapRegistrationFieldsForOrganization(organizationId);
+  } catch (e) {
+    console.warn(
+      '[createEvent API] Could not ensure default swap registration fields (add them in the organizer app if sellers see an empty form):',
+      e
+    );
   }
 
   console.log('[createEvent API] Success, data returned:', data);
@@ -424,6 +442,32 @@ export const deleteEvent = async (eventId: string): Promise<void> => {
     .eq('id', eventId);
 
   if (error) throw error;
+};
+
+/**
+ * Soft-archive an event (admin-only via RLS). Allowed from the calendar day after the event ends.
+ */
+export const archiveEvent = async (eventId: string): Promise<Event> => {
+  const existing = await getEvent(eventId);
+  if (!existing) {
+    throw new Error('Event not found');
+  }
+  if (existing.archivedAt) {
+    return existing;
+  }
+  if (!isEventArchiveEligible(existing)) {
+    throw new Error('You can archive this event starting the day after it ends.');
+  }
+
+  const { data, error } = await supabase
+    .from('events')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', eventId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return mapEventFromDb(data);
 };
 
 /**
@@ -523,6 +567,7 @@ function mapEventFromDb(dbEvent: any): Event {
     status: dbEvent.status as EventStatus,
     itemsLocked: !!dbEvent.items_locked,
     donationDeclaredAt: dbEvent.donation_declared_at ? new Date(dbEvent.donation_declared_at) : undefined,
+    archivedAt: dbEvent.archived_at ? new Date(dbEvent.archived_at) : undefined,
     settings: deserializedSettings,
   };
 }

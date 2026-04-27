@@ -60,6 +60,7 @@ export type Database = {
       }
       events: {
         Row: {
+          archived_at: string | null
           created_at: string
           donation_declared_at: string | null
           event_date: string
@@ -81,6 +82,7 @@ export type Database = {
           status: Database["public"]["Enums"]["event_status"] | null
         }
         Insert: {
+          archived_at?: string | null
           created_at?: string
           donation_declared_at?: string | null
           event_date: string
@@ -102,6 +104,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["event_status"] | null
         }
         Update: {
+          archived_at?: string | null
           created_at?: string
           donation_declared_at?: string | null
           event_date?: string
@@ -626,6 +629,7 @@ export type Database = {
       }
       sellers: {
         Row: {
+          access_token: string | null
           address: string | null
           address_line2: string | null
           auth_user_id: string | null
@@ -651,6 +655,7 @@ export type Database = {
           zip_code: string | null
         }
         Insert: {
+          access_token?: string | null
           address?: string | null
           address_line2?: string | null
           auth_user_id?: string | null
@@ -676,6 +681,7 @@ export type Database = {
           zip_code?: string | null
         }
         Update: {
+          access_token?: string | null
           address?: string | null
           address_line2?: string | null
           auth_user_id?: string | null

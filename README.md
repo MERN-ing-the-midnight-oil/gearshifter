@@ -20,7 +20,7 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 ## Tech Stack
 
 - **Frontend**: React Native (Expo) + TypeScript
-- **Backend**: Supabase (PostgreSQL + Auth + Real-time + Storage)
+- **Backend**: Supabase (PostgreSQL + Auth + Real-time + Storage). For production auth email (invites, resets), configure **custom SMTP** in the Supabase Dashboard; see `docs/supabase-custom-smtp.md`.
 - **Connectivity**: The product assumes **reliable Wi‑Fi or cellular data** at events (no offline queue in the apps today).
 - **Payments**: Not handled by app (organizations use existing systems)
 - **Sale alerts**: **Expo push notifications** to sellers when an item sells (Supabase Edge Function `notify-seller-on-sale` + Expo Push API). SMS/email to sellers is a **stretch goal** (see Future Enhancements).
@@ -55,7 +55,7 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 │   │   ├── 20260319* … 20260320*   # seller items RLS, labels, delete pending RPC, status enum
 │   │   ├── 20260331*               # seller expo push tokens; org post-event inventory table
 │   │   └── (see supabase/migrations for full list)
-│   ├── /functions                  # Supabase Edge Functions (e.g. create-seller, notify-seller-on-sale)
+│   ├── /functions                  # Edge Functions: create-seller, create-staff-account, notify-seller-on-sale
 │   ├── config.toml                 # Supabase config
 │   └── seed.sql                    # Test data for development
 │
@@ -222,7 +222,7 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 │   │   ├── price-reduction-settings.tsx
 │   │   ├── swap-registration-fields.tsx  # Seller registration form
 │   │   ├── post-event-inventory.tsx # Org inventory after a swap
-│   │   └── users.tsx               # Team members
+│   │   └── staff-accounts.tsx      # Staff accounts (org admins + station staff; invites via Edge Function)
 │   │
 │   ├── /(event)                    # Event-specific workflows
 │   │   ├── _layout.tsx             # Event context wrapper
@@ -385,7 +385,7 @@ Regenerate `packages/shared/types/supabase.ts` after migrations (`supabase gen t
 Org accounts in `admin_users` are signed-in **staff** for the organizer app. There are two complementary notions:
 
 1. **`role`**: **`admin`** vs **`volunteer`** — who this login represents day-to-day (e.g. volunteer shifts). Both use the same app; capabilities are driven by `permissions` and `is_org_admin`.
-2. **`is_org_admin`**: When **true**, the user can manage the team (create volunteer accounts, full org settings). Volunteers typically have `is_org_admin: false` and station `permissions` limited by an org admin.
+2. **`is_org_admin`**: When **true**, the user has full org control (including creating other staff via the **Staff Accounts** flow). Volunteers typically have `is_org_admin: false` and station `permissions` limited by an org admin.
 
 Station access is always gated by `permissions.stations` (check-in, POS, pickup, reports) unless `is_org_admin` grants full access.
 
@@ -440,6 +440,8 @@ Note: Organization issues payment (check/cash/etc.) outside the app; staff recor
 
 ### Initial Setup
 
+Copy environment variables from the repo root [`.env.example`](./.env.example) into `.env` and/or `packages/organizer-app/.env` and `packages/seller-app/.env` as needed (see **Environment Variables** below).
+
 ```bash
 # Clone repo
 git clone https://github.com/yourorg/gearshifter.git
@@ -458,10 +460,13 @@ supabase gen types typescript --local > packages/shared/types/supabase.ts
 ### Daily Development
 
 ```bash
-# Terminal 1: Run seller app
-yarn seller:start
+# Optional: both Expo apps on fixed ports (organizer 8081, seller 8082)
+yarn dev:both
 
-# Terminal 2: Run organizer app
+# Or run separately:
+# Terminal 1: seller app
+yarn seller:start
+# Terminal 2: organizer app
 yarn org:start
 
 # Terminal 3: Watch for Supabase changes
@@ -492,10 +497,13 @@ git commit -m "Add vendor support"
 # Deploy database migrations
 supabase db push --project-ref prod-project-id
 
-# Deploy Edge Functions (e.g. sale push notification)
+# Deploy Edge Functions
 supabase functions deploy notify-seller-on-sale
+supabase functions deploy create-staff-account
 # Set Expo access token for push (Expo dashboard → Access tokens)
 supabase secrets set EXPO_ACCESS_TOKEN=your-expo-access-token --project-ref prod-project-id
+# Optional: redirect after staff accepts email invite (see .env.example)
+supabase secrets set STAFF_INVITE_REDIRECT_URL=https://your-app.example.com/auth/callback --project-ref prod-project-id
 
 # Build and deploy apps (EAS Build configured in eas.json)
 eas build --platform ios --profile production
@@ -600,7 +608,7 @@ Outline of what an organization user sees and can do from the dashboard. **Organ
   - Gear Tags
   - Price Reductions
   - Commission Rates
-- **Team management** (admins only): Shortcut to **Team Members** (manage org users and create volunteer accounts)
+- **Staff management** (dashboard users who may invite—`admin_users.role` is not **volunteer**): Shortcut to **Staff Accounts** (invite org admins and station staff; uses `create-staff-account` Edge Function for email invites or password delivery)
 - **Empty state**: "No Events Yet" with **+ Create New [Org] Event** when there are no events
 
 If the account has no organization linked, they see a "No organization linked" card with instructions to link via Supabase/script or sign out.
@@ -612,7 +620,7 @@ If the account has no organization linked, they see a "No organization linked" c
 | **Events** | **+ Create New Event** → create-event flow |
 | **Event card** | **Manage Event** → event manage screen; **Delete** → delete event (with confirm) |
 | **Item configuration** | Open **Categories**, **Item Fields**, **Seller Registration Form**, **Gear Tags**, **Price Reductions**, or **Commission Rates** to configure org-wide settings |
-| **Team** (admins) | Open **Team Members** to manage users and create volunteer accounts |
+| **Staff** | Open **Staff Accounts** to list staff, set station permissions, and create accounts (invite or shared password) |
 | **Header** | **Sign Out** |
 
 ### From “Manage Event” (reached from dashboard)
@@ -623,7 +631,7 @@ On the event manage screen the org admin can:
 - Open **Stations** (assign devices to check-in, POS, pickup)
 - Open **Open station** → choose check-in, POS, or pickup for that device
 - See registered sellers count and list
-- Link to **Manage team members** (dashboard users)
+- Link to **Manage staff accounts** (same **Staff Accounts** screen as the dashboard)
 - **Back** to dashboard
 
 Event-level flows (from manage or stations): **Check-in** (register guests, scan seller items), **POS** (sales), **Pickup** (seller pickup), **Reports** (sales/payout reports).
@@ -717,6 +725,8 @@ EXPO_ACCESS_TOKEN=your-expo-access-token
 
 `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are provided automatically to Edge Functions when deployed on Supabase.
 
+For **`create-staff-account`**, optionally set **`STAFF_INVITE_REDIRECT_URL`** (invite completion redirect; see `.env.example`).
+
 ### Organizer App
 ```bash
 EXPO_PUBLIC_APP_VARIANT=organizer
@@ -731,6 +741,7 @@ EXPO_PUBLIC_PRINTER_TYPE=zebra
 - [APP_DESCRIPTION.md](./APP_DESCRIPTION.md) - Application architecture and features
 - [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md) - Step-by-step development plan
 - [docs/EVENT_STATUS_REFACTOR_REVIEW.md](./docs/EVENT_STATUS_REFACTOR_REVIEW.md) - Event status refactor (active/closed) and seller app mapping notes
+- [docs/supabase-custom-smtp.md](./docs/supabase-custom-smtp.md) - Custom SMTP for Auth emails (invites, password reset) in production
 
 ---
 

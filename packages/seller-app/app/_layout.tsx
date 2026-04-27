@@ -14,13 +14,14 @@ export default function RootLayout() {
     if (loading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    const inTabsGroup = segments[0] === '(tabs)';
+    const onSellerEventDeepLink = segments[0] === 'event';
+    const authRoute = segments.join('/');
+    const sellerPhoneOnboarding =
+      authRoute.startsWith('(auth)/verify-phone') || authRoute.startsWith('(auth)/complete-profile');
 
-    if (!user && !inAuthGroup) {
-      // Redirect to login if not authenticated
+    if (!user && !inAuthGroup && !onSellerEventDeepLink) {
       router.replace('/(auth)/login');
-    } else if (user && inAuthGroup) {
-      // Redirect to tabs if authenticated and in auth group
+    } else if (user && inAuthGroup && !sellerPhoneOnboarding) {
       router.replace('/(tabs)');
     }
   }, [user, loading, segments]);
@@ -39,6 +40,7 @@ export default function RootLayout() {
       <Stack>
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="event" options={{ headerShown: false }} />
       </Stack>
     </>
   );

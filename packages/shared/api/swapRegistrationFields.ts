@@ -67,12 +67,71 @@ export const getEventSwapRegistrationFields = async (
     .from('events')
     .select('organization_id')
     .eq('id', eventId)
-    .single();
+    .maybeSingle();
 
   if (eventError) throw eventError;
   if (!event) return [];
 
   return getOrganizationSwapRegistrationFields(event.organization_id);
+};
+
+const DEFAULT_SWAP_REG_FIELD_SPECS: Array<{
+  name: string;
+  label: string;
+  fieldType: FieldType;
+  isRequired: boolean;
+  isOptional: boolean;
+  displayOrder: number;
+  placeholder?: string;
+  helpText?: string;
+}> = [
+  {
+    name: 'how_heard',
+    label: 'How did you hear about this swap?',
+    fieldType: 'text',
+    isRequired: false,
+    isOptional: true,
+    displayOrder: 0,
+    placeholder: 'Friend, poster, social media…',
+    helpText: 'Optional; helps organizers improve outreach.',
+  },
+  {
+    name: 'seller_notes',
+    label: 'Anything we should know?',
+    fieldType: 'textarea',
+    isRequired: false,
+    isOptional: true,
+    displayOrder: 1,
+    placeholder: 'Accessibility, large items, etc.',
+    helpText: 'Optional notes for check-in staff.',
+  },
+];
+
+/**
+ * Ensures the organization has the same starter swap registration fields as seed.sql.
+ * Call after creating an event (or anytime) so the seller registration screen is not empty.
+ * Requires an authenticated user who may INSERT into swap_registration_field_definitions (org admins).
+ */
+export const ensureDefaultSwapRegistrationFieldsForOrganization = async (
+  organizationId: string
+): Promise<void> => {
+  const existing = await getOrganizationSwapRegistrationFields(organizationId);
+  const names = new Set(existing.map((f) => f.name));
+  for (const spec of DEFAULT_SWAP_REG_FIELD_SPECS) {
+    if (names.has(spec.name)) continue;
+    await createSwapRegistrationFieldDefinition(organizationId, {
+      name: spec.name,
+      label: spec.label,
+      fieldType: spec.fieldType,
+      isRequired: spec.isRequired,
+      isOptional: spec.isOptional,
+      displayOrder: spec.displayOrder,
+      placeholder: spec.placeholder,
+      helpText: spec.helpText,
+      validationRules: {},
+    });
+    names.add(spec.name);
+  }
 };
 
 /**

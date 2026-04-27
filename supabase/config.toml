@@ -29,3 +29,14 @@ port = 54323
 enabled = true
 port = 54324
 
+# Edge API gateway JWT check runs before Deno; it can return "Invalid JWT" even when GoTrue accepts
+# the same token. The function still validates the caller via auth.getUser(userJwt).
+[functions.create-staff-account]
+verify_jwt = false
+
+[functions.exchange-seller-session]
+verify_jwt = false
+
+[functions.auth-send-sms]
+verify_jwt = false
+
