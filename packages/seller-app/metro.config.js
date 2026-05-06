@@ -1,8 +1,31 @@
-const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
+const fs = require('fs');
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, '../..');
+
+// Monorepo: `yarn dev:both` often starts Expo with cwd at the repo root, so Expo’s default .env scan
+// can miss packages/seller-app/.env. Load both roots before Metro reads EXPO_PUBLIC_* for the bundle.
+(function loadMonorepoDotenv() {
+  try {
+    const dotenv = require('dotenv');
+    const chain = [
+      path.join(workspaceRoot, '.env'),
+      path.join(workspaceRoot, '.env.local'),
+      path.join(projectRoot, '.env'),
+      path.join(projectRoot, '.env.local'),
+    ];
+    for (const p of chain) {
+      if (fs.existsSync(p)) {
+        dotenv.config({ path: p, override: true });
+      }
+    }
+  } catch (_) {
+    /* optional: dotenv missing in some installs */
+  }
+})();
+
+const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(projectRoot);
 

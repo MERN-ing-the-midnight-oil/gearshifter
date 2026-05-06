@@ -1,4 +1,14 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  Platform,
+} from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState, useEffect } from 'react';
 import {
@@ -6,6 +16,7 @@ import {
   getSellerByQRCode,
   getSellerById,
   getSellerItemsByEvent,
+  searchSellers,
   getItem,
   parseSellerQRCode,
   parseItemQRCode,
@@ -13,6 +24,7 @@ import {
   type Seller,
   type Item,
 } from 'shared';
+import { printItemTags } from '../../../hardware/tagPrinter';
 
 function organizerCheckInListStatusLabel(status: Item['status']): string {
   if (status === 'checked_in') return 'Registered';
@@ -40,6 +52,7 @@ export default function CheckInScreen() {
   const [selectedSeller, setSelectedSeller] = useState<Seller | null>(null);
   const [sellerItems, setSellerItems] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [printingAllTags, setPrintingAllTags] = useState(false);
   const [qrCodeInput, setQrCodeInput] = useState('');
 
   // Load items when seller is selected
@@ -164,6 +177,34 @@ export default function CheckInScreen() {
     }
   };
 
+  const handlePrintAllTags = async () => {
+    if (!event || sellerItems.length === 0) return;
+    setPrintingAllTags(true);
+    try {
+      const { success, failed } = await printItemTags(sellerItems, undefined, event);
+      if (success === 0 && failed > 0) {
+        const msg =
+          Platform.OS === 'web'
+            ? 'Printing needs a Bluetooth printer from the Stations flow on a supported device.'
+            : 'Could not print tags. Connect a thermal printer and try again.';
+        Alert.alert('Print all tags', msg);
+        return;
+      }
+      if (failed > 0) {
+        Alert.alert(
+          'Print all tags',
+          `Printed ${success} tag(s). ${failed} could not be printed — open an item to retry or check the printer.`
+        );
+        return;
+      }
+      Alert.alert('Print all tags', `Sent ${success} tag(s) to the printer.`);
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Batch print failed');
+    } finally {
+      setPrintingAllTags(false);
+    }
+  };
+
   const handleRegisterNewSeller = () => {
     router.push(`/(event)/check-in/register-seller?eventId=${eventId}`);
   };
@@ -210,6 +251,20 @@ export default function CheckInScreen() {
             {selectedSeller.firstName} {selectedSeller.lastName}
           </Text>
           <Text style={styles.subtitle}>{selectedSeller.email}</Text>
+          {sellerItems.length > 0 ? (
+            <TouchableOpacity
+              style={[styles.printAllButton, printingAllTags && styles.printAllButtonDisabled]}
+              onPress={handlePrintAllTags}
+              disabled={printingAllTags || loadingItems}
+              activeOpacity={0.85}
+            >
+              {printingAllTags ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.printAllButtonText}>Print all tags</Text>
+              )}
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {loadingItems ? (
@@ -671,6 +726,22 @@ const styles = StyleSheet.create({
   addItemButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
+    fontWeight: '600',
+  },
+  printAllButton: {
+    marginTop: 16,
+    backgroundColor: '#5856D6',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+  },
+  printAllButtonDisabled: {
+    opacity: 0.65,
+  },
+  printAllButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
     fontWeight: '600',
   },
   backButton: {

@@ -84,12 +84,12 @@ export default function CategoriesScreen() {
     // Check if gear tags exist, redirect if not
     if (gearTags.length === 0) {
       Alert.alert(
-        'No Gear Tags',
+        'No Item Tags',
         'You need to create a gear tag before creating a category. Would you like to create one now?',
         [
           { text: 'Cancel', style: 'cancel' },
           {
-            text: 'Create Gear Tag',
+            text: 'Create Item Tag',
             onPress: () => {
               router.push('/(dashboard)/gear-tags');
             },
@@ -203,11 +203,11 @@ export default function CategoriesScreen() {
   const handleEditCategory = async (category: ItemCategory) => {
     if (gearTags.length === 0) {
       Alert.alert(
-        'No Gear Tags',
+        'No Item Tags',
         'You need at least one gear tag. Would you like to create one first?',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Create Gear Tag', onPress: () => router.push('/(dashboard)/gear-tags') },
+          { text: 'Create Item Tag', onPress: () => router.push('/(dashboard)/gear-tags') },
         ]
       );
       return;
@@ -433,7 +433,7 @@ export default function CategoriesScreen() {
             </View>
 
             <View style={styles.formSection}>
-              <Text style={styles.label}>Gear Tag *</Text>
+              <Text style={styles.label}>Item Tag *</Text>
               <Text style={styles.helpText}>
                 Select a gear tag template for this category
               </Text>
@@ -475,7 +475,7 @@ export default function CategoriesScreen() {
                     router.push('/(dashboard)/gear-tags');
                   }}
                 >
-                  <Text style={styles.linkButtonText}>Create Gear Tag</Text>
+                  <Text style={styles.linkButtonText}>Create Item Tag</Text>
                 </TouchableOpacity>
               )}
             </View>

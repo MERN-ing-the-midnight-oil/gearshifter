@@ -9,6 +9,7 @@ export * from './eventRegistrationWindow';
 export * from './phone';
 export * from './accessToken';
 export * from './sellerDashboardLink';
+export * from './tagTemplateFields';
 // export * from './itemNumber';
 // export * from './pricing';
 

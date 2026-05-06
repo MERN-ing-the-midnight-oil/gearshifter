@@ -1,5 +1,7 @@
 import { supabase } from './supabase';
 import type { GearTagTemplate, TagField, TagLayoutType, QRCodePosition } from '../types/models';
+import { getCategory } from './categories';
+import { sanitizeGearTagTemplatePriceSemantics } from '../utils/tagTemplateFields';
 
 /**
  * Get all gear tag templates for an organization
@@ -80,6 +82,26 @@ export const getGearTagTemplateForCategory = async (
 };
 
 /**
+ * Resolve the active gear tag template for a category: prefers `item_categories.gear_tag_template_id`,
+ * then templates whose `category_ids` includes the category, then the org default.
+ */
+export const resolveGearTagTemplateForCategory = async (
+  organizationId: string,
+  categoryId: string
+): Promise<GearTagTemplate | null> => {
+  try {
+    const category = await getCategory(categoryId);
+    if (category?.gearTagTemplateId) {
+      const linked = await getGearTagTemplate(category.gearTagTemplateId);
+      if (linked?.isActive) return linked;
+    }
+  } catch {
+    // ignore missing category
+  }
+  return getGearTagTemplateForCategory(organizationId, categoryId);
+};
+
+/**
  * Create a new gear tag template
  */
 export const createGearTagTemplate = async (
@@ -114,6 +136,9 @@ export const createGearTagTemplate = async (
       .eq('is_default', true);
   }
 
+  const { tagFields: tagFieldsForInsert, requiredFields: requiredFieldsForInsert } =
+    sanitizeGearTagTemplatePriceSemantics(templateData.tagFields, templateData.requiredFields ?? []);
+
   const insertRow = (name: string) => ({
     organization_id: organizationId,
     name,
@@ -121,8 +146,8 @@ export const createGearTagTemplate = async (
     layout_type: templateData.layoutType || 'standard',
     width_mm: templateData.widthMm || 50.0,
     height_mm: templateData.heightMm || 30.0,
-    tag_fields: templateData.tagFields,
-    required_fields: templateData.requiredFields || [],
+    tag_fields: tagFieldsForInsert,
+    required_fields: requiredFieldsForInsert ?? templateData.requiredFields ?? [],
     category_ids: templateData.categoryIds || null,
     font_family: templateData.fontFamily || 'Arial',
     font_size: templateData.fontSize || 10.0,
@@ -212,8 +237,26 @@ export const updateGearTagTemplate = async (
   if (updates.layoutType !== undefined) updateData.layout_type = updates.layoutType;
   if (updates.widthMm !== undefined) updateData.width_mm = updates.widthMm;
   if (updates.heightMm !== undefined) updateData.height_mm = updates.heightMm;
-  if (updates.tagFields !== undefined) updateData.tag_fields = updates.tagFields;
-  if (updates.requiredFields !== undefined) updateData.required_fields = updates.requiredFields;
+  if (updates.tagFields !== undefined) {
+    let req = updates.requiredFields;
+    if (req === undefined) {
+      const { data: existing, error: existingErr } = await supabase
+        .from('gear_tag_templates')
+        .select('required_fields')
+        .eq('id', templateId)
+        .single();
+      if (existingErr) throw existingErr;
+      req = (existing?.required_fields as string[]) ?? [];
+    }
+    const merged = sanitizeGearTagTemplatePriceSemantics(updates.tagFields, req);
+    updateData.tag_fields = merged.tagFields;
+    if (merged.requiredFields !== undefined) {
+      updateData.required_fields = merged.requiredFields;
+    }
+  }
+  if (updates.requiredFields !== undefined && updates.tagFields === undefined) {
+    updateData.required_fields = updates.requiredFields;
+  }
   if (updates.categoryIds !== undefined) updateData.category_ids = updates.categoryIds || null;
   if (updates.fontFamily !== undefined) updateData.font_family = updates.fontFamily;
   if (updates.fontSize !== undefined) updateData.font_size = updates.fontSize;
@@ -263,6 +306,9 @@ export const deleteGearTagTemplate = async (templateId: string): Promise<void> =
  * Helper to map database tag template to GearTagTemplate model
  */
 function mapTagTemplateFromDb(dbTemplate: any): GearTagTemplate {
+  const rawFields = (dbTemplate.tag_fields as TagField[]) || [];
+  const rawRequired = (dbTemplate.required_fields as string[]) || [];
+  const { tagFields, requiredFields } = sanitizeGearTagTemplatePriceSemantics(rawFields, rawRequired);
   return {
     id: dbTemplate.id,
     organizationId: dbTemplate.organization_id,
@@ -271,8 +317,8 @@ function mapTagTemplateFromDb(dbTemplate: any): GearTagTemplate {
     layoutType: dbTemplate.layout_type as TagLayoutType,
     widthMm: parseFloat(dbTemplate.width_mm),
     heightMm: parseFloat(dbTemplate.height_mm),
-    tagFields: (dbTemplate.tag_fields as TagField[]) || [],
-    requiredFields: dbTemplate.required_fields || [],
+    tagFields,
+    requiredFields: requiredFields ?? rawRequired,
     categoryIds: dbTemplate.category_ids || undefined,
     fontFamily: dbTemplate.font_family,
     fontSize: parseFloat(dbTemplate.font_size),

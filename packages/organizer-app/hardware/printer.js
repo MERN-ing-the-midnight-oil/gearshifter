@@ -18,6 +18,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.printerService = void 0;
 const react_native_thermal_printer_1 = __importDefault(require("react-native-thermal-printer"));
+const shared_1 = require("shared");
 class PrinterService {
     currentDevice = null;
     isPrinting = false;
@@ -128,7 +129,7 @@ class PrinterService {
      * Uses absolute positioning for Phomemo M110 and other ESC/POS printers
      */
     formatTagContent(options) {
-        const { item, tagTemplate, qrCodeData } = options;
+        const { item, tagTemplate, event, qrCodeData } = options;
         const template = tagTemplate;
         let content = '';
         // Initialize printer (ESC/POS commands)
@@ -140,12 +141,16 @@ class PrinterService {
         if (template?.tagFields && template.tagFields.length > 0) {
             // Use array order - no position sorting
             const fields = template.tagFields;
+            let templateEmittedPriceLine = false;
             fields.forEach((field) => {
                 const value = this.getFieldValue(item, field.field);
                 if (value !== null && value !== undefined) {
+                    if ((0, shared_1.isTagTemplatePriceFieldName)(field.field)) {
+                        templateEmittedPriceLine = true;
+                    }
                     const label = field.label || field.field;
                     const formattedValue = this.formatFieldValue(value, field.format);
-                    let fieldText = `${label}: ${formattedValue}`;
+                    let fieldText = field.hideLabelOnTag ? formattedValue : `${label}: ${formattedValue}`;
                     // Truncate if maxLength specified
                     const maxLen = field.maxLength ?? 50;
                     if (fieldText.length > maxLen) {
@@ -181,6 +186,7 @@ class PrinterService {
                     content += '\n';
                 }
             });
+            content += (0, shared_1.formatAutomaticGearTagPriceLines)(item, event, templateEmittedPriceLine);
             // Add QR code at specified position if enabled
             if (template.qrCodeEnabled && qrCodeData) {
                 const DOTS_PER_MM = 8;
@@ -237,9 +243,7 @@ class PrinterService {
             if (item.description) {
                 content += `Description: ${item.description}\n`;
             }
-            if (item.originalPrice) {
-                content += `Price: $${item.originalPrice.toFixed(2)}\n`;
-            }
+            content += (0, shared_1.formatAutomaticGearTagPriceLines)(item, event, false);
             if (item.size) {
                 content += `Size: ${item.size}\n`;
             }
@@ -278,6 +282,9 @@ class PrinterService {
             case 'status':
                 return item.status;
             default:
+                if ((0, shared_1.isForbiddenShadowPriceTagFieldName)(fieldName)) {
+                    return null;
+                }
                 // Check custom fields
                 if (item.customFields && item.customFields[fieldName] !== undefined) {
                     return item.customFields[fieldName];

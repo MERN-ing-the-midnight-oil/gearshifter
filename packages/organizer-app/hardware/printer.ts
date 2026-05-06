@@ -15,7 +15,11 @@
 import RNThermalPrinter from 'react-native-thermal-printer';
 import type { Item, Event } from 'shared';
 import type { GearTagTemplate } from 'shared';
-import { formatDropTime } from 'shared';
+import {
+  formatAutomaticGearTagPriceLines,
+  isForbiddenShadowPriceTagFieldName,
+  isTagTemplatePriceFieldName,
+} from 'shared';
 
 export interface PrinterDevice {
   id: string;
@@ -174,13 +178,17 @@ class PrinterService {
     if (template?.tagFields && template.tagFields.length > 0) {
       // Use array order - no position sorting
       const fields = template.tagFields;
+      let templateEmittedPriceLine = false;
 
       fields.forEach((field) => {
         const value = this.getFieldValue(item, field.field);
         if (value !== null && value !== undefined) {
+          if (isTagTemplatePriceFieldName(field.field)) {
+            templateEmittedPriceLine = true;
+          }
           const label = field.label || field.field;
           const formattedValue = this.formatFieldValue(value, field.format);
-          let fieldText = `${label}: ${formattedValue}`;
+          let fieldText = field.hideLabelOnTag ? formattedValue : `${label}: ${formattedValue}`;
 
           // Truncate if maxLength specified
           const maxLen = field.maxLength ?? 50;
@@ -222,18 +230,7 @@ class PrinterService {
         }
       });
 
-      // Reduced price line: show only when enable_price_reduction, reduced_price, and event price_drop_time are set
-      if (
-        item.enablePriceReduction &&
-        item.reducedPrice != null &&
-        event?.priceDropTime
-      ) {
-        const dropTimeStr =
-          typeof event.priceDropTime === 'string'
-            ? event.priceDropTime
-            : event.priceDropTime.toISOString();
-        content += `After ${formatDropTime(dropTimeStr)}: $${item.reducedPrice.toFixed(2)}\n`;
-      }
+      content += formatAutomaticGearTagPriceLines(item, event, templateEmittedPriceLine);
 
       // Add QR code at specified position if enabled
       if (template.qrCodeEnabled && qrCodeData) {
@@ -296,20 +293,7 @@ class PrinterService {
       if (item.description) {
         content += `Description: ${item.description}\n`;
       }
-      if (item.originalPrice) {
-        content += `Price: $${item.originalPrice.toFixed(2)}\n`;
-      }
-      if (
-        item.enablePriceReduction &&
-        item.reducedPrice != null &&
-        event?.priceDropTime
-      ) {
-        const dropTimeStr =
-          typeof event.priceDropTime === 'string'
-            ? event.priceDropTime
-            : event.priceDropTime.toISOString();
-        content += `After ${formatDropTime(dropTimeStr)}: $${item.reducedPrice.toFixed(2)}\n`;
-      }
+      content += formatAutomaticGearTagPriceLines(item, event, false);
       if (item.size) {
         content += `Size: ${item.size}\n`;
       }
@@ -352,6 +336,9 @@ class PrinterService {
       case 'status':
         return item.status;
       default:
+        if (isForbiddenShadowPriceTagFieldName(fieldName)) {
+          return null;
+        }
         // Check custom fields
         if (item.customFields && item.customFields[fieldName] !== undefined) {
           return item.customFields[fieldName] as string | number;

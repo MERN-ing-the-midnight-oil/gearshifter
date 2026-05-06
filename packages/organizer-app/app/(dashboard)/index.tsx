@@ -242,19 +242,6 @@ export default function OrganizerDashboardScreen() {
             </Text>
           </View>
         )}
-        {canInviteStaff && (
-          <TouchableOpacity
-            style={styles.headerCreateStaffButton}
-            onPress={() => router.push('/(dashboard)/staff-accounts?create=1')}
-            accessibilityRole="button"
-            accessibilityLabel="Create Staff Account"
-          >
-            <View style={styles.staffAccountButtonContent}>
-              <Ionicons name="person-add-outline" size={20} color={theme.buttonText} />
-              <Text style={styles.headerCreateStaffButtonText}>Create Staff Account</Text>
-            </View>
-          </TouchableOpacity>
-        )}
       </View>
 
       {!organization && !orgLoading && (
@@ -277,27 +264,6 @@ export default function OrganizerDashboardScreen() {
         </View>
       )}
 
-      {organization && isAdmin && (
-        <View style={styles.orgInfoCard}>
-          <View style={styles.orgInfoRow}>
-            <Text style={styles.orgInfoLabel}>Commission Rate</Text>
-            <Text style={styles.orgInfoValue}>
-              {organization.commissionRate != null
-                ? `${Math.round(organization.commissionRate * 100)}%`
-                : 'Not set'}
-            </Text>
-          </View>
-          <View style={styles.orgInfoRow}>
-            <Text style={styles.orgInfoLabel}>Vendor Commission</Text>
-            <Text style={styles.orgInfoValue}>
-              {organization.vendorCommissionRate != null
-                ? `${Math.round(organization.vendorCommissionRate * 100)}%`
-                : 'Not set'}
-            </Text>
-          </View>
-        </View>
-      )}
-
       <View style={styles.section}>
         <View style={styles.sectionTitleRow}>
           <Ionicons name="calendar-outline" size={22} color={theme.text} style={styles.sectionTitleIcon} />
@@ -314,23 +280,13 @@ export default function OrganizerDashboardScreen() {
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>No Events Yet</Text>
             <Text style={styles.emptyStateSubtext}>
-              Create your first event to get started
+              {organization
+                ? 'Use the Create New Event button below to get started'
+                : 'Create your first event once your account is linked to an organization'}
             </Text>
-            <TouchableOpacity
-              style={styles.createButton}
-              onPress={() => router.push('/(dashboard)/create-event')}
-            >
-              <Text style={styles.createButtonText}>+ Create New {organization?.name ? `${organization.name} ` : ''}Event</Text>
-            </TouchableOpacity>
           </View>
         ) : (
           <>
-            <TouchableOpacity
-              style={styles.createEventButton}
-              onPress={() => router.push('/(dashboard)/create-event')}
-            >
-              <Text style={styles.createEventButtonText}>+ Create New {organization?.name ? `${organization.name} ` : ''}Event</Text>
-            </TouchableOpacity>
           <View style={styles.eventsList}>
             {events.map((event) => (
               <TouchableOpacity
@@ -338,63 +294,11 @@ export default function OrganizerDashboardScreen() {
                 style={styles.eventCard}
                 onPress={() => router.push(`/(event)/manage?id=${event.id}`)}
               >
-                <View style={styles.eventHeader}>
-                  <Text style={styles.eventName}>{event.name}</Text>
-                  <Text style={styles.eventDate}>{formatDate(event.eventDate)}</Text>
-                </View>
-
-                <View style={styles.eventDetails}>
-                  {(event.shopOpenTime != null || event.shopCloseTime != null) && (
-                    <View style={styles.eventDetailRow}>
-                      <Text style={styles.eventDetailIcon}>🕐</Text>
-                      <Text style={styles.eventDetailText}>
-                        {formatTime(event.shopOpenTime) || '—'} – {formatTime(event.shopCloseTime) || '—'}
-                      </Text>
-                    </View>
-                  )}
-                  {(event.registrationOpenDate != null || event.registrationCloseDate != null) && (
-                    <View style={styles.eventDetailRow}>
-                      <Text style={styles.eventDetailIcon}>📅</Text>
-                      <Text style={styles.eventDetailText}>
-                        Registration: {formatDate(event.registrationOpenDate) || '—'} – {formatDate(event.registrationCloseDate) || '—'}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                {SELLER_WEB_INVITE_ORIGIN ? (
-                  <View style={styles.sellerDevBox}>
-                    <Text style={styles.sellerDevLabel}>Seller registration (browser — local dev)</Text>
-                    <Text selectable style={styles.sellerDevUrl}>
-                      {buildSellerEventWebInviteUrl(SELLER_WEB_INVITE_ORIGIN, event.id, 'register')}
-                    </Text>
-                    <Pressable
-                      onPress={(e) => {
-                        e?.stopPropagation?.();
-                        const url = buildSellerEventWebInviteUrl(
-                          SELLER_WEB_INVITE_ORIGIN,
-                          event.id,
-                          'register'
-                        );
-                        Clipboard.setStringAsync(url).then(() => {
-                          setCopiedSellerRegUrlForEventId(event.id);
-                          setTimeout(() => setCopiedSellerRegUrlForEventId(null), 2000);
-                        });
-                      }}
-                      style={({ pressed }) => [
-                        styles.sellerDevCopyBtn,
-                        pressed && { opacity: 0.85 },
-                      ]}
-                    >
-                      <Text style={styles.sellerDevCopyBtnText}>
-                        {copiedSellerRegUrlForEventId === event.id ? 'Copied' : 'Copy registration URL'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-
                 <View style={styles.eventAction}>
-                  <Text style={styles.eventActionText}>Manage Event</Text>
+                  <View style={styles.manageEventButton}>
+                    <Text style={styles.manageEventButtonText}>Manage Event</Text>
+                    <Text style={styles.manageEventButtonArrow}>→</Text>
+                  </View>
                   <View style={styles.eventActionRight}>
                     {isAdmin && (
                     <>
@@ -441,9 +345,59 @@ export default function OrganizerDashboardScreen() {
                       </Pressable>
                     </>
                     )}
-                    <Text style={styles.eventActionArrow}>→</Text>
                   </View>
                 </View>
+
+                <View style={styles.eventHeader}>
+                  <Text style={styles.eventName}>{event.name}</Text>
+                  <Text style={styles.eventDate}>{formatDate(event.eventDate)}</Text>
+                </View>
+
+                <View style={styles.eventDetails}>
+                  {(event.shopOpenTime != null || event.shopCloseTime != null) && (
+                    <View style={styles.eventDetailRow}>
+                      <Text style={styles.eventDetailIcon}>🕐</Text>
+                      <Text style={styles.eventDetailText}>
+                        {formatTime(event.shopOpenTime) || '—'} – {formatTime(event.shopCloseTime) || '—'}
+                      </Text>
+                    </View>
+                  )}
+                  {(event.registrationOpenDate != null || event.registrationCloseDate != null) && (
+                    <View style={styles.eventDetailRow}>
+                      <Text style={styles.eventDetailIcon}>📅</Text>
+                      <Text style={styles.eventDetailText}>
+                        Registration: {formatDate(event.registrationOpenDate) || '—'} – {formatDate(event.registrationCloseDate) || '—'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {SELLER_WEB_INVITE_ORIGIN ? (
+                  <View style={styles.sellerDevBox}>
+                    <Text style={styles.sellerDevLabel}>Seller invite (browser — local dev)</Text>
+                    <Text selectable style={styles.sellerDevUrl}>
+                      {buildSellerEventWebInviteUrl(SELLER_WEB_INVITE_ORIGIN, event.id)}
+                    </Text>
+                    <Pressable
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        const url = buildSellerEventWebInviteUrl(SELLER_WEB_INVITE_ORIGIN, event.id);
+                        Clipboard.setStringAsync(url).then(() => {
+                          setCopiedSellerRegUrlForEventId(event.id);
+                          setTimeout(() => setCopiedSellerRegUrlForEventId(null), 2000);
+                        });
+                      }}
+                      style={({ pressed }) => [
+                        styles.sellerDevCopyBtn,
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text style={styles.sellerDevCopyBtnText}>
+                        {copiedSellerRegUrlForEventId === event.id ? 'Copied' : 'Copy seller invite URL'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
               </TouchableOpacity>
             ))}
           </View>
@@ -481,24 +435,6 @@ export default function OrganizerDashboardScreen() {
 
             <TouchableOpacity
               style={styles.settingCard}
-              onPress={() => router.push('/(dashboard)/field-definitions')}
-            >
-              <View style={styles.settingCardContent}>
-                <View style={styles.settingCardLeft}>
-                  <Text style={styles.settingCardIcon}>📝</Text>
-                  <View style={styles.settingCardText}>
-                    <Text style={styles.settingCardTitle}>Item Fields</Text>
-                    <Text style={styles.settingCardDescription}>
-                      Configure custom fields for item registration
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.settingCardArrow}>→</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.settingCard}
               onPress={() => router.push('/(dashboard)/categories')}
             >
               <View style={styles.settingCardContent}>
@@ -523,9 +459,9 @@ export default function OrganizerDashboardScreen() {
                 <View style={styles.settingCardLeft}>
                   <Text style={styles.settingCardIcon}>🏷️</Text>
                   <View style={styles.settingCardText}>
-                    <Text style={styles.settingCardTitle}>Gear Tags</Text>
+                    <Text style={styles.settingCardTitle}>Item Registration/Tags</Text>
                     <Text style={styles.settingCardDescription}>
-                      Configure printable gear tag templates
+                      Configure item registration fields and item tags
                     </Text>
                   </View>
                 </View>
@@ -623,6 +559,21 @@ export default function OrganizerDashboardScreen() {
               </View>
             </View>
           )}
+
+          <View style={styles.section}>
+            <View style={styles.sectionContent}>
+              <TouchableOpacity
+                style={styles.createEventButton}
+                onPress={() => router.push('/(dashboard)/create-event')}
+                accessibilityRole="button"
+                accessibilityLabel="Create New Event"
+              >
+                <Text style={styles.createEventButtonText}>
+                  + Create New {organization?.name ? `${organization.name} ` : ''}Event
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </>
       )}
     </ScrollView>
@@ -718,27 +669,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  headerCreateStaffButton: {
-    marginTop: 16,
-    alignSelf: 'stretch',
-    width: '100%',
-    minHeight: 48,
-    backgroundColor: theme.button,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && {
-      // @ts-ignore web pointer
-      cursor: 'pointer',
-    }),
-  },
-  headerCreateStaffButtonText: {
-    color: theme.buttonText,
-    fontSize: 16,
-    fontWeight: '600',
-  },
   volunteerStaffNotice: {
     marginTop: 16,
     alignSelf: 'stretch',
@@ -801,35 +731,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: theme.error,
-  },
-  orgInfoCard: {
-    backgroundColor: theme.surface,
-    borderRadius: 12,
-    padding: 16,
-    margin: 16,
-    marginTop: 0,
-    borderWidth: 1,
-    borderColor: theme.border,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  orgInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  orgInfoLabel: {
-    fontSize: 14,
-    color: theme.textSecondary,
-  },
-  orgInfoValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: theme.text,
   },
   section: {
     marginHorizontal: 16,
@@ -1017,20 +918,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
   },
-  eventActionText: {
+  manageEventButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.button,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    gap: 8,
+  },
+  manageEventButtonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: theme.link,
+    fontWeight: '700',
+    color: theme.buttonText,
+  },
+  manageEventButtonArrow: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.buttonText,
   },
   eventActionRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   archiveButton: {
     paddingHorizontal: 12,
@@ -1076,10 +991,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: theme.error,
   },
-  eventActionArrow: {
-    fontSize: 18,
-    color: theme.link,
-  },
   emptyState: {
     padding: 40,
     alignItems: 'center',
@@ -1096,24 +1007,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
-  createButton: {
-    backgroundColor: theme.button,
-    borderRadius: 12,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    marginTop: 12,
-  },
-  createButtonText: {
-    color: theme.buttonText,
-    fontSize: 16,
-    fontWeight: '600',
-  },
   createEventButton: {
     backgroundColor: theme.button,
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
-    marginBottom: 16,
   },
   createEventButtonText: {
     color: theme.buttonText,

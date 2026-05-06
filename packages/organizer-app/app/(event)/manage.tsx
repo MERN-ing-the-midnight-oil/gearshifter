@@ -328,10 +328,10 @@ export default function ManageEventScreen() {
     if (eventId) router.push(`/(event)/stations?id=${eventId}`);
   };
 
-  const saveItemTypeLimit = async () => {
+  const saveItemTypeSettings = async () => {
     if (!eventId || !event || !isAdmin) return;
     if (restrictItemCategories && selectedAllowedCategoryIds.length === 0) {
-      Alert.alert('Select types', 'Choose at least one item category, or turn off the limit.');
+      Alert.alert('Select types', 'Choose at least one item type, or turn off the limit.');
       return;
     }
     setSavingItemTypeSettings(true);
@@ -349,7 +349,7 @@ export default function ManageEventScreen() {
       setRestrictItemCategories(limited);
       setSelectedAllowedCategoryIds(limited ? [...saved!] : []);
     } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to save item type settings');
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to save item types');
     } finally {
       setSavingItemTypeSettings(false);
     }
@@ -500,12 +500,12 @@ export default function ManageEventScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Item types at this event</Text>
           <Text style={styles.sectionSubtitle}>
-            By default, every active category from your organization is available. Turn on the limit to offer only
-            selected types for registration and pre‑registered items.
+            Sellers pick an item type when pre-registering so the correct gear tag prints at check-in. By default,
+            every active category from your organization is offered. Turn on the limit to allow only selected types.
           </Text>
           <View style={styles.card}>
             <View style={styles.switchRow}>
-              <Text style={styles.detailLabel}>Limit to selected categories</Text>
+              <Text style={styles.detailLabel}>Limit to selected types</Text>
               <Switch
                 value={restrictItemCategories}
                 onValueChange={(v) => {
@@ -517,9 +517,9 @@ export default function ManageEventScreen() {
               />
             </View>
             {!restrictItemCategories ? (
-              <Text style={styles.emptyText}>All organization categories are available for this event.</Text>
+              <Text style={styles.emptyText}>All organization categories are available as item types for this event.</Text>
             ) : orgCategoryChips.length === 0 ? (
-              <Text style={styles.emptyText}>No item categories found. Add categories under Organization settings.</Text>
+              <Text style={styles.emptyText}>No categories found. Add categories under Organization settings.</Text>
             ) : (
               <>
                 <Text style={[styles.sectionSubtitle, { marginTop: 12 }]}>
@@ -559,7 +559,7 @@ export default function ManageEventScreen() {
                 styles.secondaryActionButton,
                 savingItemTypeSettings && styles.modalSaveButtonDisabled,
               ]}
-              onPress={saveItemTypeLimit}
+              onPress={saveItemTypeSettings}
               disabled={savingItemTypeSettings}
             >
               <Text style={styles.secondaryActionButtonText}>

@@ -10,24 +10,26 @@ import {
   Alert,
   Pressable,
 } from 'react-native';
-import { StaffItemQrSection } from '../../components/StaffItemQrSection';
+import { StaffSellerQrSection } from '../../components/StaffSellerQrSection';
 import {
   useAuth,
-  useEvents,
+  useEvent,
   getCurrentSeller,
-  useItems,
   useItemsByEvent,
   deleteSellerPendingItem,
   getSellerFacingItemTitle,
   formatSellerItemStatusLabel,
   signOut,
+  generateSellerQRCode,
   type Item,
   type ItemStatus,
   type Organization,
 } from 'shared';
-import { useRouter, useLocalSearchParams, useGlobalSearchParams } from 'expo-router';
-import { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'expo-router';
+import { useState, useEffect } from 'react';
 import { confirmAction } from '../../lib/alerts';
+import { clearSellerDashboardEventId } from '../../lib/sellerDashboardEventStorage';
+import { useSellerScopedEventId } from '../../lib/useSellerScopedEventId';
 
 /** Matches `recordSale`: seller gets listPrice × (1 − commissionRate). Rate is a decimal (e.g. 0.15 = 15%). */
 function estimatedSellerProceeds(
@@ -66,49 +68,41 @@ function statusBadgeStyle(status: ItemStatus) {
   }
 }
 
+function formatPhoneForDisplay(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) {
+    const n = digits.slice(1);
+    return `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  const t = phone.trim();
+  return t || '—';
+}
+
 export default function DashboardScreen() {
   const { user, loading: authLoading } = useAuth();
-  const { events, loading: eventsLoading, refetch: refetchEvents } = useEvents();
   const router = useRouter();
-  const localParams = useLocalSearchParams<{ eventId?: string }>();
-  const globalParams = useGlobalSearchParams<{ eventId?: string }>();
-  const eventIdParam =
-    typeof localParams.eventId === 'string'
-      ? localParams.eventId
-      : typeof globalParams.eventId === 'string'
-        ? globalParams.eventId
-        : undefined;
   const [refreshing, setRefreshing] = useState(false);
   const [sellerName, setSellerName] = useState<string | null>(null);
   const [sellerProfileEmail, setSellerProfileEmail] = useState<string | null>(null);
+  const [sellerPhone, setSellerPhone] = useState<string | null>(null);
   const [sellerRecordId, setSellerRecordId] = useState<string | null>(null);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [allItemsOpen, setAllItemsOpen] = useState(true);
 
-  const sortedEvents = useMemo(
-    () => [...events].sort((a, b) => a.eventDate.getTime() - b.eventDate.getTime()),
-    [events]
-  );
-
+  const { scopedEventId, scopeReady } = useSellerScopedEventId(sellerRecordId);
   const {
-    items: allSellerItems,
-    loading: allItemsLoading,
-    refetch: refetchAllSellerItems,
-    removeItemFromList: removeAllSellerItemFromList,
-  } = useItems(sellerRecordId);
+    event: scopedEvent,
+    loading: scopedEventLoading,
+    refetch: refetchScopedEvent,
+  } = useEvent(scopedEventId);
 
   const {
     items: eventItems,
     loading: itemsLoading,
     refetch: refetchEventItems,
     removeItemFromList: removeEventItemFromList,
-  } = useItemsByEvent(sellerRecordId, selectedEventId);
-
-  // Deep link / redirect after add-item: ?eventId=
-  useEffect(() => {
-    if (!eventIdParam || typeof eventIdParam !== 'string') return;
-    setSelectedEventId(eventIdParam);
-  }, [eventIdParam]);
+  } = useItemsByEvent(sellerRecordId, scopedEventId);
 
   // Load seller profile to display friendly name and items (seller row id ≠ auth user id)
   useEffect(() => {
@@ -123,6 +117,7 @@ export default function DashboardScreen() {
           const fullName = `${seller.firstName} ${seller.lastName}`.trim();
           setSellerName(fullName || null);
           setSellerProfileEmail(seller.email?.trim() || null);
+          setSellerPhone(seller.phone?.trim() || null);
           setSellerRecordId(seller.id);
         }
       } catch (error) {
@@ -137,21 +132,9 @@ export default function DashboardScreen() {
     };
   }, [user?.id]);
 
-  // Auto-select the next upcoming event once events load (chronological list)
-  useEffect(() => {
-    if (sortedEvents.length === 0) return;
-    if (selectedEventId) return;
-
-    const today = new Date();
-    const upcoming = sortedEvents.find((event) => event.eventDate >= today);
-    setSelectedEventId((upcoming || sortedEvents[0]).id);
-  }, [sortedEvents, selectedEventId]);
-
-  const selectedEvent = events.find((event) => event.id === selectedEventId) || null;
-
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([refetchEvents(), refetchEventItems(), refetchAllSellerItems()]);
+    await Promise.all([refetchScopedEvent(), refetchEventItems()]);
     setRefreshing(false);
   };
 
@@ -160,6 +143,7 @@ export default function DashboardScreen() {
       const confirmed = window.confirm('Are you sure you want to sign out?');
       if (!confirmed) return;
       try {
+        await clearSellerDashboardEventId();
         await signOut();
         router.replace('/(auth)/login');
       } catch (error: unknown) {
@@ -177,6 +161,7 @@ export default function DashboardScreen() {
             style: 'destructive',
             onPress: async () => {
               try {
+                await clearSellerDashboardEventId();
                 await signOut();
                 router.replace('/(auth)/login');
               } catch (error: unknown) {
@@ -203,13 +188,15 @@ export default function DashboardScreen() {
       onConfirm: async () => {
         await deleteSellerPendingItem(itemId);
         removeEventItemFromList(itemId);
-        removeAllSellerItemFromList(itemId);
-        await Promise.all([refetchEventItems(), refetchAllSellerItems()]);
+        await refetchEventItems();
       },
     });
   };
 
-  const loading = authLoading || eventsLoading;
+  const loading =
+    authLoading ||
+    !scopeReady ||
+    (scopedEventId != null && scopedEventLoading && !refreshing);
 
   if (loading && !refreshing) {
     return (
@@ -273,186 +260,123 @@ export default function DashboardScreen() {
             </Pressable>
           </View>
         </View>
-        <View
-          style={[
-            styles.eventDropdownShell,
-            events.length === 0 && styles.eventDropdownShellDisabled,
-          ]}
-        >
+        <View style={styles.eventDropdownShell}>
           <View style={styles.eventCarouselHeader}>
-            <Text style={styles.eventCarouselLabel}>Your events</Text>
+            <Text style={styles.eventCarouselLabel}>Your sale</Text>
           </View>
-          {events.length === 0 ? (
+          {!scopeReady || scopedEventLoading ? (
             <View style={styles.eventCarouselEmpty}>
-              <Text style={styles.eventCarouselEmptyText}>No events available</Text>
+              <Text style={styles.eventCarouselEmptyText}>Loading event…</Text>
+            </View>
+          ) : !scopedEventId ? (
+            <View style={styles.eventCarouselEmpty}>
+              <Text style={styles.eventCarouselEmptyText}>No event linked yet</Text>
+              <Text style={styles.noEventExplainer}>
+                Open the sign-up link your organizer sent (same link you used for phone sign-in). That ties
+                this dashboard to their event. If you already signed in from the link, try pull-to-refresh.
+              </Text>
+            </View>
+          ) : !scopedEvent ? (
+            <View style={styles.eventCarouselEmpty}>
+              <Text style={styles.eventCarouselEmptyText}>Event not found</Text>
+              <Text style={styles.noEventExplainer}>
+                This event may have been removed or you may not have access. Use your organizer&apos;s current
+                sign-up link again.
+              </Text>
             </View>
           ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.eventCarouselContent}
-            >
-              {sortedEvents.map((event, index) => {
-                const selected = event.id === selectedEventId;
-                const d = event.eventDate;
-                const monthShort = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(d);
-                const dayNum = d.getDate();
-                const year = d.getFullYear();
-                const thisYear = new Date().getFullYear();
-                return (
-                  <TouchableOpacity
-                    key={event.id}
-                    style={[
-                      styles.eventTile,
-                      selected && styles.eventTileSelected,
-                      index < sortedEvents.length - 1 && styles.eventTileSpacing,
-                    ]}
-                    onPress={() => setSelectedEventId(event.id)}
-                    activeOpacity={0.75}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    accessibilityLabel={`${event.name}, ${formatDate(d)}`}
-                  >
-                    <Text style={styles.eventTileMonth}>{monthShort}</Text>
-                    <Text style={styles.eventTileDay}>{dayNum}</Text>
-                    {year !== thisYear ? (
-                      <Text style={styles.eventTileYear}>{year}</Text>
-                    ) : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          )}
-          {selectedEvent && (
             <View style={styles.eventSelectedDetails}>
+              {scopedEvent.organization?.name ? (
+                <Text style={styles.eventOrgLine} numberOfLines={2}>
+                  {scopedEvent.organization.name}
+                </Text>
+              ) : null}
               <Text style={styles.eventDetailTitle} numberOfLines={3}>
-                {selectedEvent.name}
+                {scopedEvent.name}
               </Text>
               <Text style={styles.eventInfoLabel}>Date</Text>
-              <Text style={styles.eventInfoValue}>{formatDate(selectedEvent.eventDate)}</Text>
-              {selectedEvent.shopOpenTime != null && (
+              <Text style={styles.eventInfoValue}>{formatDate(scopedEvent.eventDate)}</Text>
+              {scopedEvent.shopOpenTime != null && (
                 <>
                   <Text style={styles.eventInfoLabel}>Event starts</Text>
-                  <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopOpenTime)}</Text>
+                  <Text style={styles.eventInfoValue}>{formatDateTime(scopedEvent.shopOpenTime)}</Text>
                 </>
               )}
-              {selectedEvent.shopCloseTime != null && (
+              {scopedEvent.shopCloseTime != null && (
                 <>
                   <Text style={styles.eventInfoLabel}>Event ends</Text>
-                  <Text style={styles.eventInfoValue}>{formatDateTime(selectedEvent.shopCloseTime)}</Text>
+                  <Text style={styles.eventInfoValue}>{formatDateTime(scopedEvent.shopCloseTime)}</Text>
                 </>
               )}
-              {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null || (selectedEvent.gearDropOffPlace != null && selectedEvent.gearDropOffPlace.trim() !== '')) && (
+              {(scopedEvent.gearDropOffStartTime != null || scopedEvent.gearDropOffEndTime != null || (scopedEvent.gearDropOffPlace != null && scopedEvent.gearDropOffPlace.trim() !== '')) && (
                 <>
                   <Text style={styles.eventInfoLabel}>Gear drop-off</Text>
                   <Text style={styles.eventInfoValue}>
-                    {(selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null)
-                      ? `${selectedEvent.gearDropOffStartTime != null ? formatDateTime(selectedEvent.gearDropOffStartTime) : '—'} – ${selectedEvent.gearDropOffEndTime != null ? formatDateTime(selectedEvent.gearDropOffEndTime) : '—'}`
+                    {(scopedEvent.gearDropOffStartTime != null || scopedEvent.gearDropOffEndTime != null)
+                      ? `${scopedEvent.gearDropOffStartTime != null ? formatDateTime(scopedEvent.gearDropOffStartTime) : '—'} – ${scopedEvent.gearDropOffEndTime != null ? formatDateTime(scopedEvent.gearDropOffEndTime) : '—'}`
                       : ''}
-                    {selectedEvent.gearDropOffPlace?.trim() ? (selectedEvent.gearDropOffStartTime != null || selectedEvent.gearDropOffEndTime != null ? ` · ${selectedEvent.gearDropOffPlace.trim()}` : selectedEvent.gearDropOffPlace.trim()) : ''}
+                    {scopedEvent.gearDropOffPlace?.trim() ? (scopedEvent.gearDropOffStartTime != null || scopedEvent.gearDropOffEndTime != null ? ` · ${scopedEvent.gearDropOffPlace.trim()}` : scopedEvent.gearDropOffPlace.trim()) : ''}
                   </Text>
                 </>
               )}
-              {(selectedEvent.pickupStartTime != null || selectedEvent.pickupEndTime != null) ? (
+              {(scopedEvent.pickupStartTime != null || scopedEvent.pickupEndTime != null) ? (
                 <>
                   <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
                   <Text style={styles.eventInfoValue}>
-                    {selectedEvent.pickupStartTime != null ? formatDateTime(selectedEvent.pickupStartTime) : '—'}
+                    {scopedEvent.pickupStartTime != null ? formatDateTime(scopedEvent.pickupStartTime) : '—'}
                     {' – '}
-                    {selectedEvent.pickupEndTime != null ? formatDateTime(selectedEvent.pickupEndTime) : '—'}
+                    {scopedEvent.pickupEndTime != null ? formatDateTime(scopedEvent.pickupEndTime) : '—'}
                   </Text>
                 </>
-              ) : selectedEvent.shopCloseTime != null && (
+              ) : scopedEvent.shopCloseTime != null && (
                 <>
                   <Text style={styles.eventInfoLabel}>Seller pickup (unsold equipment)</Text>
-                  <Text style={styles.eventInfoValue}>After {formatDateTime(selectedEvent.shopCloseTime)}</Text>
+                  <Text style={styles.eventInfoValue}>After {formatDateTime(scopedEvent.shopCloseTime)}</Text>
                 </>
               )}
             </View>
           )}
         </View>
+        {scopedEvent && sellerRecordId ? (
+          <View style={styles.contactCard}>
+            <Text style={styles.contactCardTitle}>You&apos;re signed up for this sale</Text>
+            <Text style={styles.contactCardHint}>
+              Phone verification registers you for the swap. Your contact details are below; you can update your
+              name on the Profile tab.
+            </Text>
+            {sellerName ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Name</Text>
+                <Text style={styles.contactValue}>{sellerName}</Text>
+              </View>
+            ) : null}
+            {sellerPhone ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Phone</Text>
+                <Text style={styles.contactValue}>{formatPhoneForDisplay(sellerPhone)}</Text>
+              </View>
+            ) : null}
+            {(user?.email || sellerProfileEmail) ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Email</Text>
+                <Text style={styles.contactValue}>{user?.email ?? sellerProfileEmail}</Text>
+              </View>
+            ) : null}
+            <TouchableOpacity
+              style={styles.contactProfileButton}
+              onPress={() => router.push('/(tabs)/profile')}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.contactProfileButtonText}>Edit name on Profile</Text>
+            </TouchableOpacity>
+            <StaffSellerQrSection qrPayload={generateSellerQRCode(sellerRecordId)} />
+          </View>
+        ) : null}
       </View>
 
-      {sellerRecordId && (
+      {sellerRecordId && scopedEvent && (
         <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.allItemsHeader}
-            onPress={() => setAllItemsOpen((o) => !o)}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: allItemsOpen }}
-            accessibilityLabel={
-              allItemsOpen
-                ? 'Collapse list of all items you are selling'
-                : 'Expand list of all items you are selling'
-            }
-          >
-            <View style={styles.allItemsHeaderTextBlock}>
-              <Text style={styles.allItemsTitle}>All items you are selling</Text>
-              <Text style={styles.allItemsSubcaption}>
-                Across every event ({allSellerItems.length})
-              </Text>
-            </View>
-            <Text style={styles.allItemsChevron}>{allItemsOpen ? '▲' : '▼'}</Text>
-          </TouchableOpacity>
-          {allItemsOpen &&
-            (allItemsLoading && !refreshing ? (
-              <View style={styles.itemsCard}>
-                <View style={styles.itemsLoadingRow}>
-                  <ActivityIndicator size="small" color="#007AFF" />
-                  <Text style={styles.itemsLoadingText}>Loading all items…</Text>
-                </View>
-              </View>
-            ) : allSellerItems.length === 0 ? (
-              <View style={styles.itemsCard}>
-                <Text style={styles.itemsEmptyText}>
-                  You do not have any items yet. Pre-register an item for an event to see it here.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.itemsListContainer}>
-                {allSellerItems.map((item) => {
-                  const itemEvent = events.find((e) => e.id === item.eventId) || null;
-                  return (
-                    <View key={item.id}>
-                      {itemEvent ? (
-                        <Text style={styles.allItemsEventLabel} numberOfLines={2}>
-                          {itemEvent.name}
-                        </Text>
-                      ) : (
-                        <Text style={styles.allItemsEventLabelMuted} numberOfLines={1}>
-                          Event (loading…)
-                        </Text>
-                      )}
-                      <ItemSummaryRow
-                        item={item}
-                        organization={itemEvent?.organization}
-                        formatDate={formatDate}
-                        onDeletePending={
-                          item.status === 'pending'
-                            ? () => handleDeletePendingItem(item.id)
-                            : undefined
-                        }
-                        onEditPending={
-                          item.status === 'pending' && itemEvent
-                            ? () =>
-                                router.push(
-                                  `/event/${itemEvent.id}/add-item?itemId=${encodeURIComponent(item.id)}`
-                                )
-                            : undefined
-                        }
-                      />
-                    </View>
-                  );
-                })}
-              </View>
-            ))}
-        </View>
-      )}
-
-      {selectedEvent && sellerRecordId && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Your items for this event</Text>
+          <Text style={styles.sectionTitle}>Your items for sale</Text>
           {itemsLoading && !refreshing ? (
             <View style={styles.itemsCard}>
               <View style={styles.itemsLoadingRow}>
@@ -463,7 +387,7 @@ export default function DashboardScreen() {
           ) : eventItems.length === 0 ? (
             <View style={styles.itemsCard}>
               <Text style={styles.itemsEmptyText}>
-                No items yet for this event. Pre-register an item below to see it listed here.
+                No items yet. Pre-register an item below to see it listed here.
               </Text>
             </View>
           ) : (
@@ -472,16 +396,16 @@ export default function DashboardScreen() {
                 <ItemSummaryRow
                   key={item.id}
                   item={item}
-                  organization={selectedEvent.organization}
+                  organization={scopedEvent.organization}
                   formatDate={formatDate}
                   onDeletePending={
                     item.status === 'pending' ? () => handleDeletePendingItem(item.id) : undefined
                   }
                   onEditPending={
-                    item.status === 'pending' && selectedEvent
+                    item.status === 'pending' && scopedEvent
                       ? () =>
                           router.push(
-                            `/event/${selectedEvent.id}/add-item?itemId=${encodeURIComponent(item.id)}`
+                            `/event/${scopedEvent.id}/add-item?itemId=${encodeURIComponent(item.id)}`
                           )
                       : undefined
                   }
@@ -495,14 +419,15 @@ export default function DashboardScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Pre-register an item to sell</Text>
         <Text style={styles.registerItemHint}>
-          Choose the item type from the event&apos;s list and fill out the form. That pre-registers your item; it is fully in the sale only after staff check it in.
+          Choose your item type, then fill out the form. That pre-registers your item; it is fully in the sale only after
+          staff check it in.
         </Text>
         <TouchableOpacity
-          style={[styles.registerItemButton, !selectedEvent && styles.registerItemButtonDisabled]}
+          style={[styles.registerItemButton, !scopedEvent && styles.registerItemButtonDisabled]}
           onPress={() => {
-            if (selectedEvent) router.push(`/event/${selectedEvent.id}/add-item`);
+            if (scopedEvent) router.push(`/event/${scopedEvent.id}/add-item`);
           }}
-          disabled={!selectedEvent}
+          disabled={!scopedEvent}
           activeOpacity={0.8}
         >
           <Text style={styles.registerItemPlus}>+</Text>
@@ -594,11 +519,6 @@ function ItemSummaryRow({
           </Text>
         )}
       </View>
-      <StaffItemQrSection
-        qrCode={item.qrCode}
-        itemNumber={item.itemNumber}
-        show={item.status === 'pending'}
-      />
       <View style={styles.itemMetaRow}>
         {item.category?.trim() ? (
           <Text style={styles.itemMeta}>Category: {item.category}</Text>
@@ -833,6 +753,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#888',
   },
+  noEventExplainer: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  eventOrgLine: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 6,
+  },
   eventCarouselContent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -891,6 +823,55 @@ const styles = StyleSheet.create({
     color: '#0057C2',
     lineHeight: 28,
     marginBottom: 4,
+  },
+  contactCard: {
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#F3E5F5',
+    borderWidth: 1,
+    borderColor: '#E1BEE7',
+  },
+  contactCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#4A148C',
+    marginBottom: 6,
+  },
+  contactCardHint: {
+    fontSize: 13,
+    color: '#5E35B1',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  contactRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  contactLabel: {
+    width: 56,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6A1B9A',
+  },
+  contactValue: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1A1A1A',
+  },
+  contactProfileButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    backgroundColor: '#6A1B9A',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  contactProfileButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
   },
   registerItemHint: {
     fontSize: 14,

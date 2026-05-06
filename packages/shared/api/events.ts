@@ -9,81 +9,6 @@ export interface EventWithOrganization extends Event {
 }
 
 /**
- * Get all events (for browsing) with organization info
- */
-export const getEvents = async (): Promise<EventWithOrganization[]> => {
-  const { data, error } = await supabase
-    .from('events')
-    .select(`
-      *,
-      organizations (
-        id,
-        name,
-        slug,
-        commission_rate,
-        vendor_commission_rate
-      )
-    `)
-    .is('archived_at', null)
-    .order('event_date', { ascending: true });
-
-  if (error) throw error;
-  return data.map(mapEventWithOrgFromDb);
-};
-
-/**
- * Get upcoming events (registration open or in progress) with organization info
- */
-export const getUpcomingEvents = async (): Promise<EventWithOrganization[]> => {
-  const now = new Date().toISOString();
-  const today = now.split('T')[0];
-  console.log('[getUpcomingEvents] Querying events...', { now, today });
-  
-  // Check auth state
-  const { data: { session } } = await supabase.auth.getSession();
-  console.log('[getUpcomingEvents] Auth session:', { 
-    hasSession: !!session, 
-    userId: session?.user?.id 
-  });
-  
-  const { data, error } = await supabase
-    .from('events')
-    .select(`
-      *,
-      organizations (
-        id,
-        name,
-        slug,
-        commission_rate,
-        vendor_commission_rate
-      )
-    `)
-    .is('archived_at', null)
-    .eq('status', 'active')
-    .gte('event_date', today)
-    .order('event_date', { ascending: true })
-    .limit(5);
-
-  console.log('[getUpcomingEvents] Query result:', { 
-    dataCount: data?.length || 0, 
-    error: error?.message,
-    errorCode: error?.code,
-    errorDetails: error?.details,
-    errorHint: error?.hint,
-    data: data 
-  });
-
-  if (error) {
-    console.error('[getUpcomingEvents] Error:', error);
-    throw error;
-  }
-  
-  const mapped = data.map(mapEventWithOrgFromDb);
-  console.log('[getUpcomingEvents] Mapped events:', mapped);
-  return mapped;
-};
-
-/**
  * Get a single event by ID with organization info
  */
 export const getEvent = async (eventId: string): Promise<EventWithOrganization | null> => {
@@ -104,49 +29,6 @@ export const getEvent = async (eventId: string): Promise<EventWithOrganization |
 
   if (error) throw error;
   return data ? mapEventWithOrgFromDb(data) : null;
-};
-
-/**
- * Get current/active event for a seller
- * Returns event where seller has items, or next upcoming event
- */
-export const getCurrentEventForSeller = async (sellerId: string): Promise<Event | null> => {
-  // First, try to find an event where the seller has items
-  const { data: itemsWithEvents, error: itemsError } = await supabase
-    .from('items')
-    .select('event_id')
-    .eq('seller_id', sellerId)
-    .limit(1);
-
-  if (itemsError) throw itemsError;
-
-  if (itemsWithEvents && itemsWithEvents.length > 0) {
-    const eventId = itemsWithEvents[0].event_id;
-    const event = await getEvent(eventId);
-    if (event) {
-      // getEvent returns EventWithOrganization, but EventWithOrganization extends Event
-      // so we can return it directly
-      return event;
-    }
-  }
-
-  // If no items, get the next upcoming event
-  const now = new Date().toISOString();
-  const { data: nextEvent, error: eventError } = await supabase
-    .from('events')
-    .select('*')
-    .is('archived_at', null)
-    .gte('event_date', now.split('T')[0])
-    .order('event_date', { ascending: true })
-    .limit(1)
-    .single();
-
-  if (eventError) {
-    // No upcoming events
-    return null;
-  }
-
-  return nextEvent ? mapEventFromDb(nextEvent) : null;
 };
 
 /**

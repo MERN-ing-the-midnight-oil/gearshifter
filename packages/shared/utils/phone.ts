@@ -20,6 +20,17 @@ export function normalizePhoneE164US(raw: string): string {
   throw new Error('Enter a valid 10-digit US number or full international number with +');
 }
 
+/** Same rules as {@link normalizePhoneE164US} but returns null instead of throwing. */
+export function tryNormalizePhoneE164US(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  try {
+    return normalizePhoneE164US(t);
+  } catch {
+    return null;
+  }
+}
+
 /** Placeholder email when sellers.email is NOT NULL but the user has no inbox (phone auth). */
 export function sellerPlaceholderEmailForAuthUserId(authUserId: string): string {
   const compact = authUserId.replace(/-/g, '');

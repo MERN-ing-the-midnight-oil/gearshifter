@@ -1,13 +1,20 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useEffect } from 'react';
 import { useEvent, isSellerSwapRegistrationWindowOpen } from 'shared';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from 'shared';
+import { setSellerDashboardEventId } from '../../../lib/sellerDashboardEventStorage';
 
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { event, loading, error } = useEvent(id);
+  const eventId = typeof id === 'string' ? id.trim() : '';
+  const { event, loading, error } = useEvent(eventId || null);
   const { user } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    if (user && eventId) void setSellerDashboardEventId(eventId);
+  }, [user, eventId]);
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
@@ -188,7 +195,7 @@ export default function EventDetailScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Seller account</Text>
             <Text style={styles.guestHint}>
-              Sign in or create an account to register for this swap and pre-register items.
+              Sign in or create an account to open your seller dashboard and pre-register items.
             </Text>
             <View style={styles.actionSection}>
               <TouchableOpacity
@@ -196,7 +203,7 @@ export default function EventDetailScreen() {
                 onPress={() =>
                   router.push({
                     pathname: '/(auth)/login',
-                    params: { redirect: `/event/${event.id}/register` },
+                    params: { redirect: `/event/${event.id}` },
                   })
                 }
               >
@@ -207,7 +214,7 @@ export default function EventDetailScreen() {
                 onPress={() =>
                   router.push({
                     pathname: '/(auth)/signup',
-                    params: { redirect: `/event/${event.id}/register` },
+                    params: { redirect: `/event/${event.id}` },
                   })
                 }
               >
@@ -221,9 +228,9 @@ export default function EventDetailScreen() {
           <View style={styles.actionSection}>
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => router.push(`/event/${event.id}/register`)}
+              onPress={() => router.replace('/(tabs)')}
             >
-              <Text style={styles.primaryButtonText}>Register for This Event</Text>
+              <Text style={styles.primaryButtonText}>Open seller dashboard</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.secondaryButton}

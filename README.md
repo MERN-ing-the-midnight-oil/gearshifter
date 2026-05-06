@@ -37,6 +37,7 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 ├── tsconfig.json                   # Shared TypeScript config
 ├── .gitignore
 ├── README.md                       # This file
+├── /consignly-www                  # Static marketing site (Consignly); privacy + terms HTML
 │
 ├── /supabase                       # Supabase project files
 │   ├── /migrations                 # Database migration files (see folder for full list)
@@ -54,8 +55,9 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 │   │   ├── 20250318*               # pickup window, gear drop-off on events
 │   │   ├── 20260319* … 20260320*   # seller items RLS, labels, delete pending RPC, status enum
 │   │   ├── 20260331*               # seller expo push tokens; org post-event inventory table
+│   │   ├── 20260503* … 20260506*   # seller dashboard JWT + strict seller RLS; org sellers SELECT; check-in photo bucket
 │   │   └── (see supabase/migrations for full list)
-│   ├── /functions                  # Edge Functions: create-seller, create-staff-account, notify-seller-on-sale
+│   ├── /functions                  # Edge Functions (see Supabase section below)
 │   ├── config.toml                 # Supabase config
 │   └── seed.sql                    # Test data for development
 │
@@ -81,7 +83,9 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 ├── /api                            # Supabase client & API calls
 │   ├── supabase.ts                 # Supabase client initialization
 │   ├── auth.ts                     # Auth helpers (login, logout, password reset, session)
+│   ├── sellerDashboardSession.ts   # Sync/clear seller JWT `seller_dashboard_event_id` (Edge-backed)
 │   ├── items.ts                    # Item CRUD operations
+│   ├── itemCheckInPhotos.ts        # Optional check-in reference photos (Storage + signed URLs)
 │   ├── events.ts                   # Event queries
 │   ├── sellers.ts                  # Seller operations
 │   ├── transactions.ts             # Transaction operations
@@ -107,7 +111,7 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 ├── /hooks                          # Custom React hooks
 │   ├── useAuth.ts                  # Auth state management
 │   ├── useItems.ts                 # Fetch/manage items
-│   ├── useEvents.ts                # Fetch/manage events
+│   ├── useEvents.ts                # `useEvent(eventId)` — single-event fetch (seller/organizer flows)
 │   ├── useTransactions.ts          # Transaction operations
 │   ├── useOrganizer.ts             # Organizer context
 │   ├── useAdminUser.ts             # Admin user & permissions
@@ -117,6 +121,10 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 ├── /utils                          # Helper functions
 │   ├── qrCode.ts                   # QR code generation/parsing
 │   ├── priceReduction.ts           # Time-based price reduction logic
+│   ├── eventRegistrationWindow.ts  # Seller registration window vs event status + archive
+│   ├── phone.ts                    # Phone normalization helpers (seller OTP flows)
+│   ├── sellerDashboardLink.ts      # Deep links / web invite URL builders
+│   ├── tagTemplateFields.ts        # Gear tag template field metadata for organizer UIs
 │   ├── formatters.ts               # Display/formatter helpers
 │   ├── itemDisplay.ts              # Seller-facing titles & status labels (e.g. pre-registered)
 │   └── index.ts
@@ -157,30 +165,37 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 │   │
 │   ├── /(auth)                     # Authentication screens
 │   │   ├── _layout.tsx             # Auth layout (stack navigation)
-│   │   ├── login.tsx               # Phone number input
-│   │   └── signup.tsx              # First/last name, email (seller registration)
+│   │   ├── login.tsx               # Phone number → OTP request
+│   │   ├── verify-phone.tsx        # OTP verify (+ resend)
+│   │   ├── complete-profile.tsx    # Name / optional email after first sign-in
+│   │   └── signup.tsx              # Legacy/compat redirect toward phone auth
 │   │
-│   ├── /(tabs)                     # Main app tabs (bottom nav)
-│   │   ├── _layout.tsx             # Tab layout
-│   │   ├── index.tsx               # Home (Event View)
-│   │   ├── events.tsx              # Browse upcoming events
-│   │   ├── items.tsx               # My items (all events)
-│   │   ├── notifications.tsx       # Notification history
-│   │   └── profile.tsx             # User profile settings
+│   ├── /(tabs)                     # Main signed-in stack (Home, Items, Notifications, Profile)
+│   │   ├── _layout.tsx             # Stack layout (no global “browse all events” list)
+│   │   ├── index.tsx               # Home — single linked event (“Your sale”)
+│   │   ├── items.tsx               # My items for the linked dashboard event
+│   │   ├── notifications.tsx       # Notification / sale history
+│   │   └── profile.tsx             # Account + sign-out (clears dashboard JWT scope)
 │   │
-│   └── /event/[id]                 # Event-specific screens
+│   └── /event/[id]                 # Event-specific screens (invite/deep links)
 │       ├── index.tsx               # Event details
 │       ├── add-item.tsx            # Pre-register item for event
-│       └── register.tsx             # Seller registration for event
+│       └── register.tsx            # Seller registration for event
 │
-├── /components                     # App-specific components (minimal)
+├── /components                     # App-specific components
+│   ├── SellerGearTagPreRegisterLayout.tsx  # Pre-register / tag flows where used
+│   ├── StaffSellerQrSection.tsx    # “QR for event staff” on seller home (`sellers.qr_code` for Organizer check-in)
 │   └── ...
 │
 ├── /assets                         # Images, etc.
 │   └── favicon.png
 │
 └── /lib                            # App-specific utilities
-    └── theme.ts
+    ├── theme.ts
+    ├── postAuthRedirect.ts         # Preserve organizer invite targets across auth
+    ├── sellerDashboardEventStorage.ts  # Persist linked event id (AsyncStorage)
+    ├── useSellerScopedEventId.ts   # Resolve scoped event for lists + API calls
+    └── afterSellerPhoneSession.ts  # Post-OTP seller bootstrap hooks
 ```
 
 ---
@@ -243,6 +258,7 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 │   │       └── index.tsx           # Summary, donations closure, CSV export
 │
 ├── /components                     # Organizer-specific components
+│   ├── OrganizerBreadcrumbs.tsx    # Dashboard / event stack breadcrumbs
 │   ├── PrinterConnection.*         # Printer connection UI
 │   ├── TagPreviewMockup.tsx        # Label/tag preview
 │   ├── /LabelPrinter               # Label printing components
@@ -262,6 +278,10 @@ This keeps the app simple, flexible, and compatible with any payment workflow or
 ---
 
 ## Supabase Database Schema
+
+**Edge Functions** (deploy from `supabase/functions/` as needed): `create-seller`, `create-staff-account`, `notify-seller-on-sale`, `exchange-seller-session`, `auth-send-sms`, **`set-seller-dashboard-event`**, **`clear-seller-dashboard-event`** (maintain seller JWT `seller_dashboard_event_id`), and dev-only **`dev-phone-session-bypass`** when `ALLOW_DEV_PHONE_BYPASS` is set on the hosted project (see [`.env.example`](./.env.example)).
+
+**Storage:** migration **`20260506140000_item_check_in_photo`** creates private bucket **`item-check-in-photos`** (JPEG/PNG/WebP/HEIC, ~6 MB limit) for optional staff reference photos; paths start with the **`items.id`** prefix. Regenerate `packages/shared/types/supabase.ts` after pulling migrations.
 
 **Key Tables** (detailed migrations in `/supabase/migrations`)
 
@@ -296,6 +316,7 @@ events
 ├── status (enum) - active|closed
 ├── items_locked (boolean) - when true, sellers cannot add/edit items
 ├── donation_declared_at (timestamptz, nullable) - when set, event closed for donations
+├── archived_at (timestamptz, nullable) - soft-archive after pickup/shop close (organizer dashboard)
 ├── pickup_start_time / pickup_end_time (timestamptz, nullable) - seller pickup window for unsold gear
 ├── gear_drop_off_* / gear_drop_off_place - optional drop-off window and location
 └── settings (jsonb) - categories, donation options, etc.
@@ -340,6 +361,8 @@ items
 ├── sold_at (timestamptz)
 ├── sold_price (decimal)
 ├── paid_at (timestamptz, nullable) - when item was marked as paid
+├── check_in_photo_storage_path (text, nullable) - object key in private bucket item-check-in-photos
+├── check_in_photo_captured_at (timestamptz, nullable) - when staff captured the reference photo
 └── created_at (timestamptz)
 
 transactions
@@ -392,8 +415,9 @@ Station access is always gated by `permissions.stations` (check-in, POS, pickup,
 ### Row Level Security (RLS)
 
 Every table has RLS policies to ensure:
-- Sellers only see their own data
-- Admins see data for their organization's events
+- **Organizer staff** see data for their organization's events
+- **Sellers** see rows for the event in their current session: Supabase **`app_metadata.seller_dashboard_event_id`** must match the row’s `event_id` for seller-scoped tables (items, transactions, payouts, swap registrations, org catalog reads used in seller flows). There is no “browse every event I ever joined” list in the seller app; a new OTP session + dashboard scope is used per event.
+- **Guest / walk-up sellers** remain supported via existing guest-seller and phone-claim migrations—verify against real walk-up data when changing `sellers` or `items` policies (recent fix: org `SELECT` on `sellers` uses **`org_user_can_select_seller_row`** to avoid RLS recursion through `items`).
 - Proper isolation between organizations
 
 ---
@@ -500,6 +524,8 @@ supabase db push --project-ref prod-project-id
 # Deploy Edge Functions
 supabase functions deploy notify-seller-on-sale
 supabase functions deploy create-staff-account
+supabase functions deploy set-seller-dashboard-event
+supabase functions deploy clear-seller-dashboard-event
 # Set Expo access token for push (Expo dashboard → Access tokens)
 supabase secrets set EXPO_ACCESS_TOKEN=your-expo-access-token --project-ref prod-project-id
 # Optional: redirect after staff accepts email invite (see .env.example)
@@ -558,6 +584,10 @@ eas submit --platform android --latest
 - Each org can have multiple events
 - **Rationale**: SaaS-ready, scalable business model
 
+### 8. Seller session scopes to one event
+- **Seller dashboard JWT:** After sign-in from an invite, the app calls Edge helpers so `app_metadata.seller_dashboard_event_id` matches that event; seller RLS requires the claim for item and money-related reads/writes.
+- **Rationale:** Prevents accidental cross-event data exposure in Postgres, matches the product rule “one sale at a time” on the phone, and removes the old browse-all-events hub.
+
 ---
 
 ## Future Enhancements
@@ -573,7 +603,7 @@ eas submit --platform android --latest
 
 ### Phase 3
 - [ ] White-label customization
-- [ ] Self-service organization signup
+- [ ] Self-service organization signup *(bootstrap `INSERT` into `organizations` exists today; tighten for commercial abuse control — see DEVELOPMENT_PLAN §1.1.5)*
 - [ ] Analytics dashboard (revenue, trends)
 - [ ] Automated email marketing
 
@@ -638,63 +668,49 @@ Event-level flows (from manage or stations): **Check-in** (register guests, scan
 
 ---
 
-## Seller app home & tabs
+## Seller app home & main screens
 
-Outline of what a seller sees and can do from the seller app (tab-based).
+Outline of what a seller sees after **phone OTP** sign-in. The app is optimized for **one linked event per session** (JWT `seller_dashboard_event_id`); joining a different sale uses a **new invite link** (and typically a new sign-in), not an in-app event directory.
 
 ### What the seller sees
 
-- **Tab bar**: Home | Events | Items | Notifications | Profile
+- **Main stack** (from `(tabs)/`): **Home** | **My Items** | **Notifications** | **Profile** — no global “browse all upcoming events” screen.
 
-**Home tab (Event View)**
+**Home (`(tabs)/index.tsx`)**
 
-- **Header**: "Event View" with **Current Event** dropdown (lists upcoming events)
-- **Event card** (when an event is selected): date, shop start/end, gear drop-off window/place (if set), seller pickup window for unsold gear (if set)
-- **Your items for this event**: list with per-item status (e.g. **Pre-registered** while `pending`), price/share estimates, edit/remove while pre-registered
-- **Pre-register an item to sell**: primary CTA to open the add-item flow for the selected event
+- **Header / hero**: “Your sale” style summary for the **linked event** (name, dates, key windows when loaded)
+- **Your items for sale**: items for that event with status (e.g. **Pre-registered** while `pending`); edit/remove while still pre-registered where the API allows
+- **QR for event staff** (`StaffSellerQrSection`): when `sellers.qr_code` is set, shows the code/QR so volunteers can scan it in **Organizer → Check-in** (print labels, add walk-up items)
+- **CTAs**: Open event details/register flow, **pre-register another item**, etc., depending on registration window and archive state
 
-**Events tab**
+**My Items (`(tabs)/items.tsx`)**
 
-- **Header**: "Upcoming Events" / "Browse and join gear swap events"
-- List of upcoming events: name, org, status badge, date, shop hours, commission; registration open/close copy; **View Details & Pre-register Items** or **View Details**
-- Empty: "No Upcoming Events"
+- List of consigned items for the **same linked event** only; empty state if no event is linked yet
 
-**Items tab**
+**Notifications (`(tabs)/notifications.tsx`)**
 
-- **My Items**: All consigned items with status pills (e.g. **Pre-registered** before check-in); edit/remove while pre-registered
+- **Sale alerts**: Completed sales from `transactions` with item label/number, price, proceeds, time. **Push** when staff record a sale at POS (device + permission + EAS **project ID** in seller `app.json`).
 
-**Notifications tab**
+**Profile (`(tabs)/profile.tsx`)**
 
-- **Sale alerts**: List of your completed sales (from `transactions`) with item label/number, sale price, your estimated proceeds, and time. **Push notifications** fire when staff record a sale at POS (requires physical device, notification permission, and EAS **project ID** in seller `app.json` for Expo push tokens).
+- Account summary (phone / optional email), **Sign Out** (clears dashboard scope via Edge + local storage)
 
-**Profile tab**
-
-- **Profile** title and signed-in email/phone
-- **Account**: User ID
-- **Sign Out**
-
-### What the seller can do from the tabs
+### What the seller can do
 
 | From | Action |
 |------|--------|
-| **Home (Event View)** | Pick **Current Event**; review timing; **Pre-register new item** → `add-item` for that event; open items from **Your items for this event** (edit/remove when pre-registered) |
-| **Events** | Tap event → **Event detail** (`/event/[id]`) |
-| **Items** | Cross-event list of consigned items with status |
-| **Notifications** | Review past sale alerts (and grant push permission on device for live alerts) |
+| **Home** | Review the linked event; jump to **register** or **add-item** when the registration window allows; manage items shown on home |
+| **My Items** | Full list for the event; open rows to edit/remove while pre-registered |
+| **Notifications** | Review past sales; enable push on device |
 | **Profile** | **Sign Out** |
 
-### From Event detail (reached from Events tab)
+### From Event routes (`/event/[id]/…`) — invites and deep links
 
-- **Event details**: Date, shop hours, commission, vendor commission, registration open/close, price drop time (if set)
-- **Registration**: Opens / closes dates; "Registration is currently open" or "Registration opens soon" / "Registration has closed"
-- When **registration is open** and user is signed in: **Register for This Event** → seller registration form; **Pre-register items** → add items to this event
+- **`/event/[id]`** — Event details, registration status copy, links to **Register** and **Pre-register items** when allowed
+- **`/event/[id]/register`** — Org-defined seller registration form
+- **`/event/[id]/add-item`** — Pre-register a consignment item for that event
 
-### From event-level flows (after selecting an event)
-
-| Screen | Purpose |
-|--------|--------|
-| **Register** | Complete seller registration form for the event (org-defined fields) |
-| **Pre-register item** (`add-item`) | Add a consignment item (category, org-defined item fields, price, etc.); shows as pre-registered until check-in |
+Organizer **invite links** (native + optional **Expo web** base URL) should land sellers on these routes; `postAuthRedirect` preserves the path across OTP verification.
 
 ---
 
@@ -710,9 +726,13 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```bash
 EXPO_PUBLIC_APP_VARIANT=seller
 EXPO_PUBLIC_ENABLE_NOTIFICATIONS=true   # set to false to skip push registration
+# Optional: public origin for seller deep links / SMS bodies (see .env.example)
+# EXPO_PUBLIC_SELLER_DASHBOARD_ORIGIN=https://your-seller-web-host.example
 ```
 
 Set **`expo.extra.eas.projectId`** in `packages/seller-app/app.json` to your EAS project UUID (from `eas init` / `eas project:info`) so Expo can issue push tokens.
+
+**Local / dev OTP:** When `EXPO_PUBLIC_SUPABASE_URL` points at the Supabase CLI, the seller app may use the **`dev-phone-session-bypass`** Edge Function for faster iteration. **Do not** leave `ALLOW_DEV_PHONE_BYPASS` enabled on production projects.
 
 ### Supabase (Edge Functions — deployed project)
 
@@ -732,6 +752,8 @@ For **`create-staff-account`**, optionally set **`STAFF_INVITE_REDIRECT_URL`** (
 EXPO_PUBLIC_APP_VARIANT=organizer
 EXPO_PUBLIC_ENABLE_PRINTER=true
 EXPO_PUBLIC_PRINTER_TYPE=zebra
+# Optional: show https seller invite URLs + QR for Expo web (e.g. http://localhost:8082 when using yarn dev:both)
+# EXPO_PUBLIC_SELLER_WEB_INVITE_ORIGIN=http://localhost:8082
 ```
 
 ---
@@ -740,6 +762,7 @@ EXPO_PUBLIC_PRINTER_TYPE=zebra
 
 - [APP_DESCRIPTION.md](./APP_DESCRIPTION.md) - Application architecture and features
 - [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md) - Step-by-step development plan
+- [consignly-www/index.html](./consignly-www/index.html) - Static **Consignly** landing (links to `privacy-policy.html` and `terms.html`)
 - [docs/EVENT_STATUS_REFACTOR_REVIEW.md](./docs/EVENT_STATUS_REFACTOR_REVIEW.md) - Event status refactor (active/closed) and seller app mapping notes
 - [docs/supabase-custom-smtp.md](./docs/supabase-custom-smtp.md) - Custom SMTP for Auth emails (invites, password reset) in production
 

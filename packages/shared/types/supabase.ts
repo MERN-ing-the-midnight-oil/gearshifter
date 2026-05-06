@@ -338,6 +338,8 @@ export type Database = {
         Row: {
           category: string
           category_id: string | null
+          check_in_photo_captured_at: string | null
+          check_in_photo_storage_path: string | null
           checked_in_at: string | null
           created_at: string
           custom_fields: Json | null
@@ -362,6 +364,8 @@ export type Database = {
         Insert: {
           category: string
           category_id?: string | null
+          check_in_photo_captured_at?: string | null
+          check_in_photo_storage_path?: string | null
           checked_in_at?: string | null
           created_at?: string
           custom_fields?: Json | null
@@ -386,6 +390,8 @@ export type Database = {
         Update: {
           category?: string
           category_id?: string | null
+          check_in_photo_captured_at?: string | null
+          check_in_photo_storage_path?: string | null
           checked_in_at?: string | null
           created_at?: string
           custom_fields?: Json | null

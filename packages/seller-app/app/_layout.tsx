@@ -18,10 +18,14 @@ export default function RootLayout() {
     const authRoute = segments.join('/');
     const sellerPhoneOnboarding =
       authRoute.startsWith('(auth)/verify-phone') || authRoute.startsWith('(auth)/complete-profile');
+    // Do not hijack login/signup while signed in — those screens run post-auth navigation
+    // (e.g. dev phone bypass → complete-profile or tabs). Otherwise we race and skip onboarding.
+    const onLoginOrSignup =
+      authRoute === '(auth)/login' || authRoute === '(auth)/signup';
 
     if (!user && !inAuthGroup && !onSellerEventDeepLink) {
       router.replace('/(auth)/login');
-    } else if (user && inAuthGroup && !sellerPhoneOnboarding) {
+    } else if (user && inAuthGroup && !sellerPhoneOnboarding && !onLoginOrSignup) {
       router.replace('/(tabs)');
     }
   }, [user, loading, segments]);

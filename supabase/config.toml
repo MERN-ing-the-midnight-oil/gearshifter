@@ -40,3 +40,23 @@ verify_jwt = false
 [functions.auth-send-sms]
 verify_jwt = false
 
+[functions.dev-phone-session-bypass]
+verify_jwt = false
+
+[functions.set-seller-dashboard-event]
+verify_jwt = true
+
+[functions.clear-seller-dashboard-event]
+verify_jwt = true
+
+# Public GET (?t=) for buyer receipt HTML; POST validates caller JWT in function code.
+[functions.buyer-sale-receipt]
+verify_jwt = false
+
+[functions.pos-complete-sale]
+verify_jwt = true
+
+# Public GET (?t=) for QR handoff preview; POST validates JWT in function code.
+[functions.pos-receipt-intent]
+verify_jwt = false
+

@@ -157,6 +157,113 @@ export const recordSale = async (
 };
 
 /**
+ * Organizer POS: record sale only after Twilio accepts the buyer receipt SMS (Edge `pos-complete-sale`).
+ * Requires buyer phone; rolls back the sale if the receipt text cannot be sent.
+ */
+export const completePosSaleWithBuyerReceipt = async (args: {
+  itemId: string;
+  soldPrice: number;
+  buyerName: string;
+  buyerEmail?: string;
+  buyerPhone: string;
+}): Promise<Transaction> => {
+  const { data, error } = await supabase.functions.invoke('pos-complete-sale', {
+    body: {
+      item_id: args.itemId,
+      sold_price: args.soldPrice,
+      buyer_name: args.buyerName,
+      buyer_email: args.buyerEmail ?? null,
+      buyer_phone: args.buyerPhone,
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const payload = data as { ok?: boolean; error?: string; transaction?: Record<string, unknown> } | null;
+  if (!payload || payload.ok !== true || !payload.transaction) {
+    throw new Error(payload?.error || 'Sale could not be completed.');
+  }
+
+  return mapTransactionFromDb(payload.transaction);
+};
+
+/** QR handoff: volunteer shows receipt URL as QR; buyer photographs; volunteer completes when ready (`pos-receipt-intent`). */
+export const createPosReceiptIntent = async (args: {
+  itemId: string;
+  soldPrice: number;
+  buyerName: string;
+  buyerEmail?: string;
+  buyerPhone?: string;
+}): Promise<{ intentToken: string; intentPublicUrl: string; expiresAt: string }> => {
+  const { data, error } = await supabase.functions.invoke('pos-receipt-intent', {
+    body: {
+      action: 'create',
+      item_id: args.itemId,
+      sold_price: args.soldPrice,
+      buyer_name: args.buyerName,
+      buyer_email: args.buyerEmail ?? null,
+      buyer_phone: args.buyerPhone ?? '',
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const payload = data as {
+    ok?: boolean;
+    error?: string;
+    intent_token?: string;
+    intent_public_url?: string;
+    expires_at?: string;
+  } | null;
+
+  if (!payload || payload.ok !== true || !payload.intent_token || !payload.intent_public_url || !payload.expires_at) {
+    throw new Error(payload?.error || 'Could not create receipt QR.');
+  }
+
+  return {
+    intentToken: payload.intent_token,
+    intentPublicUrl: payload.intent_public_url,
+    expiresAt: payload.expires_at,
+  };
+};
+
+export const completePosReceiptIntent = async (intentToken: string): Promise<Transaction> => {
+  const { data, error } = await supabase.functions.invoke('pos-receipt-intent', {
+    body: { action: 'complete', intent_token: intentToken },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const payload = data as { ok?: boolean; error?: string; transaction?: Record<string, unknown> } | null;
+  if (!payload || payload.ok !== true || !payload.transaction) {
+    throw new Error(payload?.error || 'Could not complete sale.');
+  }
+
+  return mapTransactionFromDb(payload.transaction);
+};
+
+export const cancelPosReceiptIntent = async (intentToken: string): Promise<void> => {
+  const { data, error } = await supabase.functions.invoke('pos-receipt-intent', {
+    body: { action: 'cancel', intent_token: intentToken },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const payload = data as { ok?: boolean; error?: string } | null;
+  if (!payload || payload.ok !== true) {
+    throw new Error(payload?.error || 'Could not cancel handoff.');
+  }
+};
+
+/**
  * Helper to map database transaction to Transaction model
  */
 function mapTransactionFromDb(dbTransaction: any): Transaction {

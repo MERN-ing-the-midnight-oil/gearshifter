@@ -36,11 +36,12 @@ Fill this in **when you park** so “future you” has no blank page:
 
 | Area | State |
 |------|--------|
-| DB / migrations | Mature schema; **org-centric tenancy**; **`events.archived_at`** for soft-archive after pickup; **public read** policies on `events` / `organizations` and **swap registration field definitions + page settings** so invite links work before sign-in; default field backfill migration; see [Multi-tenancy and SaaS](#saas-multi-tenancy) for known gaps |
-| Shared API | Auth, sellers, events, items, transactions, payouts, orgs, exports, etc. largely wired |
-| Seller app | Seller auth migration **IN PROGRESS** (moving from email/password to phone OTP + permanent seller link token); current UI still uses email/password with **post-sign-in redirect**; tabs + event register / add-item with **registration window** + **archived** guards (`shared` utils); **Expo web** (`yarn seller:web`) for invite URLs when origin is configured |
-| Organizer app | Dashboard stack, **event archive** (eligibility by pickup/shop close), **seller invite panel** (QR + native/web URLs via `shared` link builders + optional `EXPO_PUBLIC_SELLER_WEB_INVITE_ORIGIN`), **InlineWebCalendar** on web for date-heavy event screens, event flows, stations, check-in, POS, **pickup**, **reports**, **staff accounts** + `create-staff-account`; **Expo web** (`yarn organizer:web`); **thermal printing** native-class |
-| Edge Functions | **Hosted ref `spozqnkfwltgxqrokpaj`.** In repo / deployed: `create-seller`, `create-staff-account`, `notify-seller-on-sale`, `exchange-seller-session`, `auth-send-sms`; broader SMS/email blast pipelines not built as named in older plans |
+| DB / migrations | Mature schema; **org-centric tenancy**; **`events.archived_at`** for soft-archive after pickup; **public read** policies on `events` / `organizations` and **swap registration field definitions + page settings** so invite links work before sign-in; **seller dashboard JWT scope** in `app_metadata.seller_dashboard_event_id` + strict RLS on seller paths (items, payouts, transactions, swap registrations, org-scoped catalog reads) — chain includes `20260503120000`, `20260503140000`, `20260504120000`, **`20260504180000`** (org staff `SELECT` sellers for org events), **`20260505120000`** (fix `sellers`↔`items` RLS recursion for org-linked seller reads), **`20260506140000`** (optional **check-in photo** columns + private Storage bucket `item-check-in-photos`) (see [§2.2.0](#220-one-dashboard-per-seller-per-event-per-session)) |
+| Shared API | Auth, sellers, events, items, transactions, payouts, orgs, exports, etc. largely wired; **no** global seller `getEvents` / `getUpcomingEvents` / `getCurrentEventForSeller` (removed); **`syncSellerDashboardEventToAuthSession`** / **`clearSellerDashboardEventFromAuthSession`** (`sellerDashboardSession.ts`); **`itemCheckInPhotos.ts`** for organizer check-in capture + signed URLs |
+| Seller app | **Phone OTP** is the primary seller path with **`postAuthRedirect`** from organizer links; **one dashboard per event per auth session** (no multi-event carousel, no browse-all-events screen); main stack is **Home + My Items + Notifications + Profile** scoped to linked event (`AsyncStorage` + JWT via Edge); **Home** can show **`StaffSellerQrSection`** (seller `qr_code` for staff to scan in Organizer check-in); event register / add-item with **registration window** + **archived** guards; **Expo web** (`yarn seller:web`) for invite URLs when origin is configured |
+| Organizer app | Dashboard stack + **`OrganizerBreadcrumbs`** for wayfinding, **event archive** (eligibility by pickup/shop close), **seller invite panel** (QR + native/web URLs via `shared` link builders + optional `EXPO_PUBLIC_SELLER_WEB_INVITE_ORIGIN`), **InlineWebCalendar** on web for date-heavy event screens, event flows, stations, check-in (**optional item photo** on **`check-in/item-details.tsx`**), POS, **pickup**, **reports**, **staff accounts** + `create-staff-account`; gear tag screens share **`tagTemplateFields`** helpers; **Expo web** (`yarn organizer:web`); **thermal printing** native-class |
+| Marketing site | Static **`consignly-www/`** (Consignly positioning + **Privacy** / **Terms** pages linked from the landing `index.html`) — deploy separately from Expo apps |
+| Edge Functions | **Hosted ref `spozqnkfwltgxqrokpaj`.** In repo / deployed: `create-seller`, `create-staff-account`, `notify-seller-on-sale`, `exchange-seller-session`, `auth-send-sms`, **`set-seller-dashboard-event`**, **`clear-seller-dashboard-event`** (JWT `seller_dashboard_event_id`); dev-only `dev-phone-session-bypass` when enabled; broader SMS/email blast pipelines not built as named in older plans |
 | Push | Expo push + sale notification path (see README) |
 | Realtime | Mostly pull-to-refresh / refetch; no full live subscriptions across the board |
 | Offline | Not started |
@@ -52,15 +53,15 @@ Fill this in **when you park** so “future you” has no blank page:
 
 These match “back burner but moving” — each is a **bounded** slice:
 
-1. **Seller auth migration slice** — Keep organizer auth untouched; implement seller phone OTP login + verify flow, bootstrap/find seller record by phone, and preserve `postAuthRedirect`; only then retire seller email/password signup.
+1. **Seller auth polish** — Phone OTP + profile + `postAuthRedirect` + JWT dashboard scope are **shipped**; finish **opaque-token** entrypoints and SMS copy, regression matrix vs invites, and any remaining legacy email paths you still want to support for tests only.
 2. **Seller invite + registration path** — Confirm migrations applied; set `EXPO_PUBLIC_SELLER_WEB_INVITE_ORIGIN` where you host seller web; test anon → event/register → sign-up → form loads fields → submit; test native deep link; confirm archived events and closed registration windows show the right blocking copy.
 3. **Production hardening** — Deploy functions, custom SMTP ([`docs/supabase-custom-smtp.md`](./docs/supabase-custom-smtp.md)), `STAFF_INVITE_REDIRECT_URL`, EAS builds; run one full event dry-run on staging.
-4. **Multi-tenant / B2B SaaS hardening** (when selling beyond a pilot) — Billing or `organization` lifecycle fields; revisit **broad public `events` SELECT`** if a customer needs hiding non-invited events ([§1.1.5](#saas-multi-tenancy)); tighten permissive org `INSERT` RLS; confirm **`sellers`** RLS covers org-staff paths (guest seller, `getSellerById`); optionally narrow **seller “browse all events”** for strict cross-org privacy.
-5. **Photo uploads** (post-MVP, high user value) — Supabase Storage, seller add-item + organizer views, size limits.
+4. **Multi-tenant / B2B SaaS hardening** (when selling beyond a pilot) — Billing or `organization` lifecycle fields; revisit **broad public `events` SELECT`** if a customer needs hiding non-invited events ([§1.1.5](#saas-multi-tenancy)); tighten permissive org `INSERT` RLS; confirm **`sellers`** RLS covers org-staff paths (guest seller, `getSellerById`). **Seller cross-event browse** is removed; seller row access is **JWT-scoped to one `event_id` per session** ([§2.2.0](#220-one-dashboard-per-seller-per-event-per-session)).
+5. **Photo uploads** (post-MVP, high user value) — Seller add-item + organizer item views; **organizer check-in reference photos** are started (`item-check-in-photos` bucket + `items.check_in_photo_*`; see §3.3.4).
 6. **Seller item detail / edit** — Dedicated `item/[id]` (or equivalent) if you want parity with organizer edits without only using add-item flows.
 7. **Label printing polish** — Finish retries, edge cases, and device matrix (Zebra/Brother) under real Wi‑Fi.
 8. **Web UX for sellers / org** (optional slice) — Responsive or desktop-first flows on **Expo web** for long forms and reports before any split to a separate web framework.
-9. **Housekeeping** — Mark this file’s checkboxes when you finish a slice; trim dead code paths after phone-auth migration lands.
+9. **Housekeeping** — Mark this file’s checkboxes when you finish a slice; grep for stale references to **`(tabs)/events`** / browse-all-events seller UX (README and any stray comments should match the **stack** under `(tabs)/` with Home, Items, Notifications, Profile only).
 
 ### Recommended build, ship, and test order
 
@@ -125,7 +126,7 @@ Use this as a **default sequence** when you are not firefighting a bug. Each ste
 
 #### 1.1.1 **DONE** — Migrations applied
 
-- Review `supabase/migrations/` when returning after DB work elsewhere (recent examples: `events.archived_at`, public read for invites + swap registration catalog, backfill default registration fields)  
+- Review `supabase/migrations/` when returning after DB work elsewhere (recent examples: `events.archived_at`, public read for invites + swap registration catalog, backfill default registration fields, **seller dashboard JWT RLS**, **org `sellers` SELECT** without recursion, **`item-check-in-photos` Storage** + `items.check_in_photo_*`)  
 - Test connectivity from both apps  
 
 #### 1.1.1a **DONE** — `items.paid_at` (and related payout flow)
@@ -135,9 +136,10 @@ Use this as a **default sequence** when you are not firefighting a bug. Each ste
 - After schema changes: `supabase gen types typescript --local > packages/shared/types/supabase.ts`  
 - Run `yarn type-check` at root when you touch types or shared APIs  
 
-#### 1.1.3 **PARTIAL** — Edge Functions
+#### 1.1.3 **PARTIAL** — Edge Functions and Storage
 
-- **In repo:** `create-seller`, `create-staff-account`, `notify-seller-on-sale`  
+- **In repo:** `create-seller`, `create-staff-account`, `notify-seller-on-sale`, `exchange-seller-session`, `set-seller-dashboard-event`, `clear-seller-dashboard-event`, `auth-send-sms`, `dev-phone-session-bypass` (dev/staging only)  
+- **Storage (migration-managed):** private bucket **`item-check-in-photos`** for optional staff-captured reference images at check-in; app uses signed URLs (`packages/shared/api/itemCheckInPhotos.ts`)  
 - **Not built as originally named:** generic `send-notification` (SMS/email), `generate-reports` server export — some behavior lives in app + RPC/CSV instead  
 
 #### 1.1.4 **PARTIAL** — Supabase Auth configuration
@@ -161,7 +163,8 @@ Use this as a **default sequence** when you are not firefighting a bug. Each ste
 | Billing / plan state | No first-class subscription row or flags on `organizations` yet; add when you integrate Stripe (or similar) and gate writes or features |
 | Org creation | Policy allows authenticated users to insert `organizations` (bootstrap for self-serve signup); review tighten (invite-only, checkout-gated, or server-only) for production abuse control |
 | `admin_users` shape | Today effectively **one org per staff login** (`get_user_organization_id`-style helpers); multi-org staff needs a membership model later |
-| Seller ↔ org privacy | Sellers can **browse all events** (cross-tenant read) by design today; **`events` / `organizations` are also broadly readable** for anon/authenticated clients to support invite links — tighten with scoped tokens, row flags, or narrower policies if a customer requires strict isolation |
+| Seller ↔ org privacy | **Done (seller app):** removed stack “browse all events” and **RLS seller browse-all** policy; seller **items / payouts / transactions / swap registrations / catalog** require JWT `seller_dashboard_event_id` matching the row’s event (no null-claim fallback). **Still broad:** public `events` / `organizations` read for invite links — tighten with row flags or narrower `authenticated` policies if a customer requires hiding events from non-invitees |
+| Seller ↔ another event/org | **By design:** same phone user can sell at **another** event only via a **new sign-in session** (new OTP or new opaque-token flow) so the JWT carries a different `seller_dashboard_event_id`; not a single global “my events” dashboard |
 | `sellers` RLS | Policies center on **own profile** (`auth_user_id = auth.uid()`); verify org-staff paths (guest seller create, `getSellerById` for check-in) against production RLS—add org-scoped policies or Edge/RPC if anything relies on gaps |
 
 ### 1.2 Shared API layer
@@ -191,10 +194,10 @@ Items **1.2.1–1.2.7** remain **DONE** at a high level (`auth`, `sellers`, `eve
 
 ### 2.1 Authentication
 
-#### 2.1.1 **IN PROGRESS** — Seller login migration (`packages/seller-app/app/(auth)`)
+#### 2.1.1 **PARTIAL** — Seller login migration (`packages/seller-app/app/(auth)`)
 
-- **Shipped:** phone entry (`login.tsx`) → OTP verify (`verify-phone.tsx`) → optional profile (`complete-profile.tsx`); `postAuthRedirect` preserved via route params  
-- **Still to do:** durable seller token URL, SMS copy in transactional messages, full regression vs invite links  
+- **Shipped:** phone entry (`login.tsx`) → OTP verify (`verify-phone.tsx`) → optional profile (`complete-profile.tsx`); `postAuthRedirect` preserved via route params; **JWT dashboard scope** synced after sign-in when redirect includes `/event/<uuid>/…` (`extractEventIdFromSellerRedirect` + `set-seller-dashboard-event` + `refreshSession`); sign-out clears scope (`clear-seller-dashboard-event` + local storage)  
+- **Still to do:** durable seller opaque-token **product UX** end-to-end (SMS copy, hosted `/seller` handler passing **`eventId`** into `signInWithSellerOpaqueToken` when the org knows the event), token rotation metadata, full regression matrix vs invite links  
 - Keep organizer email/password auth unchanged  
 
 #### 2.1.2 **PARTIAL** — Dedicated SMS verify screen (`verify-phone.tsx`)
@@ -213,6 +216,7 @@ Items **1.2.1–1.2.7** remain **DONE** at a high level (`auth`, `sellers`, `eve
 - [x] Add API helpers: find/create/link seller by normalized phone after OTP session (`resolveSellerAfterPhoneSignIn`, `createSellerAfterPhoneProfile`, `normalizePhoneE164US`)  
 - [x] Add seller auth screens for phone request + OTP verify  
 - [x] Preserve invite redirects (`redirect` / `postAuthRedirect`) across OTP flow  
+- [x] **One dashboard per event per session:** `app_metadata.seller_dashboard_event_id` + strict seller RLS; client `setSellerDashboardEventId` / `useSellerScopedEventId`; removed browse-all-events UI and legacy “infer event from latest item” fallback  
 - [ ] Keep walk-up and self-serve sellers on identical downstream shape *(guest phone claim RLS migration added; apply + test with real walk-up data)*  
 - [ ] Add recovery path: lost link/new phone -> OTP -> same seller -> reissue permanent link  
 - [x] Remove seller email/password-only assumptions from seller primary UX *(legacy `signUpAsSeller` remains for scripts/tests only)*  
@@ -220,7 +224,19 @@ Items **1.2.1–1.2.7** remain **DONE** at a high level (`auth`, `sellers`, `eve
 
 ### 2.2 Event browsing and registration
 
-#### 2.2.1 **DONE** — Events list (`(tabs)/events.tsx`)  
+<a id="220-one-dashboard-per-seller-per-event-per-session"></a>
+
+#### 2.2.0 **DONE** — One dashboard per seller **per event** (per **auth session**)
+
+- **Product rule:** The seller **home** (`(tabs)/index`) and **My Items** (`(tabs)/items`) apply to **a single org event** chosen for that session — not a multi-event hub. Selling at **another** event (or another org’s event) uses a **new sign-in** so Supabase issues a JWT with a different `seller_dashboard_event_id`.  
+- **Client:** `useSellerScopedEventId` resolves scope from **deep link `?eventId=`** or **`AsyncStorage`** (`sellerDashboardEventStorage`); opening register / event detail / add-item persists the event id and calls **`syncSellerDashboardEventToAuthSession`**.  
+- **Server:** Edge **`set-seller-dashboard-event`** / **`clear-seller-dashboard-event`**; Postgres helpers `auth_seller_dashboard_event_id()`, `seller_dashboard_event_scope_matches()`, `organization_id_for_seller_dashboard_event()`; seller RLS on `items`, `transactions`, `payouts`, `seller_swap_registrations`, and org-scoped catalog reads **requires** a matching JWT claim (strict migration `20260504120000` — no “null claim = see all my items” path).  
+- **Removed:** Stack screen **`(tabs)/events.tsx`** (browse-all upcoming events); shared hooks **`useEvents` / `useUpcomingEvents`** and APIs **`getEvents`**, **`getUpcomingEvents`**, **`getCurrentEventForSeller`**, **`getSellerMostRecentItemEventId`**.  
+- **Not done here:** Narrowing **public** `events` SELECT for authenticated users ([§1.1.5](#saas-multi-tenancy)); wiring **every** opaque-token entrypoint to pass **`dashboardEventId`** (`buildSellerDashboardUrl` supports optional `eventId` query param).  
+
+#### 2.2.1 **REMOVED** — Browse-all events list (`(tabs)/events.tsx`)
+
+- **Superseded** by §2.2.0; sellers discover sales only via **organizer invite links** (and deep routes under `event/[id]/…`).  
 
 #### 2.2.2 **PARTIAL** — Event details (`event/[id]/index.tsx`)
 
@@ -229,10 +245,13 @@ Items **1.2.1–1.2.7** remain **DONE** at a high level (`auth`, `sellers`, `eve
 #### 2.2.3 **PARTIAL** — Event registration (`event/[id]/register.tsx`)
 
 - Dynamic fields + page settings + category picker wired; **depends on public read policies** for pre-auth web invites — regression-test after any RLS change  
+- After OTP, **`setSellerDashboardEventId`** re-runs when **`user?.id`** appears so JWT scope matches the page’s `eventId` under strict RLS  
 
 ### 2.3 Item management
 
-#### 2.3.1 **DONE** — Items list (`(tabs)/items.tsx`)  
+#### 2.3.1 **DONE** — Items list (`(tabs)/items.tsx`)
+
+- Lists **only items for the linked dashboard event** (`useItemsByEvent` + scoped event id); empty state when no event is linked  
 
 #### 2.3.2 **DONE** — Add item (`event/[id]/add-item.tsx`)
 
@@ -249,7 +268,9 @@ Items **1.2.1–1.2.7** remain **DONE** at a high level (`auth`, `sellers`, `eve
 
 ### 2.4 Seller home and profile
 
-#### 2.4.1 **DONE** — Home / event view (`(tabs)/index.tsx`)  
+#### 2.4.1 **DONE** — Home / event view (`(tabs)/index.tsx`)
+
+- Single-event header (“Your sale”), **“Your items for sale”** list, pre-register CTA; **`StaffSellerQrSection`** surfaces `sellers.qr_code` for staff check-in when present; no multi-event carousel; aligns with §2.2.0  
 
 #### 2.4.2 **PARTIAL** — Profile (`(tabs)/profile.tsx`)
 
@@ -261,9 +282,10 @@ Items **1.2.1–1.2.7** remain **DONE** at a high level (`auth`, `sellers`, `eve
 
 ### 2.5 QR code display
 
-#### 2.5.1 **NOT STARTED** — Standalone seller QR screen (e.g. `qr-code.tsx`)
+#### 2.5.1 **PARTIAL** — Seller QR for staff (`StaffSellerQrSection` on home)
 
-- Optional if check-in always scans from profile or a future component  
+- **Shipped on Home:** QR + copy for `sellers.qr_code` so event staff can scan in Organizer check-in  
+- **Optional later:** dedicated full-screen `qr-code.tsx` if you want the same UX from Profile or a larger format  
 
 ---
 
@@ -309,9 +331,10 @@ Items **1.2.1–1.2.7** remain **DONE** at a high level (`auth`, `sellers`, `eve
 
 #### 3.3.3 **DONE** — Guest registration (`check-in/register-guest.tsx`)  
 
-#### 3.3.4 **IN PROGRESS** — Label printing workflow end-to-end
+#### 3.3.4 **IN PROGRESS** — Check-in workflow (print + optional photo)
 
-- Review → print → check-in; hardware variance and failure recovery  
+- **Label printing:** Review → print → check-in; hardware variance and failure recovery (`hardware/printer.ts`, `tagPrinter.ts`)  
+- **Optional check-in photo:** `check-in/item-details.tsx` can attach a reference image (stored under `item-check-in-photos/{item_id}/…`, columns `check_in_photo_storage_path` / `check_in_photo_captured_at`); extend to other check-in screens, POS cross-check UX, and retention policy as needed  
 
 ### 3.4 Point of sale
 
@@ -399,7 +422,7 @@ Use this when stabilizing for a real event or store submission — **manual test
 
 #### 7.3.x **NOT STARTED** — Performance pass (indexes, RLS review, image strategy)  
 
-- Include **SaaS / tenancy** checks from [§1.1.5](#saas-multi-tenancy) (seller policies, org insert, cross-tenant reads) when you harden for many orgs on one project  
+- Include **SaaS / tenancy** checks from [§1.1.5](#saas-multi-tenancy) (org insert, public `events` read, guest seller paths) when you harden for many orgs on one project; seller **row** RLS for items is now **JWT-scoped** ([§2.2.0](#220-one-dashboard-per-seller-per-event-per-session))  
 
 #### 7.4 **MAINTENANCE** — Manual regression order
 
@@ -432,6 +455,11 @@ Use this when stabilizing for a real event or store submission — **manual test
 
 ### Refactors and conventions (recent)
 
+- **Seller dashboard scope:** One **event** per **Supabase session** via `app_metadata.seller_dashboard_event_id` + strict RLS; client `packages/seller-app/lib/sellerDashboardEventStorage.ts`, `useSellerScopedEventId.ts`, shared `sellerDashboardSession.ts`; Edge `set-seller-dashboard-event` / `clear-seller-dashboard-event`; migrations `20260503120000_seller_dashboard_event_jwt_rls.sql`, `20260503140000_drop_legacy_seller_item_update_policy.sql`, `20260504120000_seller_rls_strict_dashboard_claim.sql`.  
+- **Org staff ↔ `sellers` reads:** `20260504180000_org_select_sellers_for_org_events.sql` plus **`org_user_can_select_seller_row`** in `20260505120000_fix_sellers_org_policy_recursion.sql` — avoids infinite RLS recursion when org policies join through `items`.  
+- **Check-in photos:** `20260506140000_item_check_in_photo.sql` + shared **`itemCheckInPhotos`** API; organizer UI wired from **`check-in/item-details.tsx`**.  
+- **Shared tag template field metadata:** `packages/shared/utils/tagTemplateFields.ts` — used by organizer gear tag / preview flows to stay aligned with template JSON.  
+- **Organizer navigation:** `packages/organizer-app/components/OrganizerBreadcrumbs.tsx` — breadcrumbs on dashboard/event stacks where enabled.  
 - **Event status:** `active` | `closed` plus `items_locked` — see [docs/EVENT_STATUS_REFACTOR_REVIEW.md](./docs/EVENT_STATUS_REFACTOR_REVIEW.md).  
 - **Event archive:** `events.archived_at` set from organizer dashboard when `isEventArchiveEligible`; seller flows treat archived events as closed.  
 - **Staff:** `admin_users` with `role`, `is_org_admin`, `permissions.stations`, and optional admin-capability flags used by staff creation flows; organizer **Staff Accounts** screen + `create-staff-account` Edge Function.  
@@ -453,6 +481,7 @@ Use this when stabilizing for a real event or store submission — **manual test
 
 - [APP_DESCRIPTION.md](./APP_DESCRIPTION.md)  
 - [README.md](./README.md)  
+- [consignly-www/](./consignly-www/) — static **Consignly** marketing pages (`index.html`, `privacy-policy.html`, `terms.html`)  
 - [docs/EVENT_STATUS_REFACTOR_REVIEW.md](./docs/EVENT_STATUS_REFACTOR_REVIEW.md)  
 - [docs/supabase-custom-smtp.md](./docs/supabase-custom-smtp.md)  
 - [docs/PICKUP_STATION_DESIGN.md](./docs/PICKUP_STATION_DESIGN.md)  

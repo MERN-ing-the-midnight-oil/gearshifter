@@ -7,14 +7,18 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Image,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import * as ImagePicker from 'expo-image-picker';
 import {
   getItem,
   updateItemStatus,
   useEvent,
   formatSellerItemStatusLabel,
+  uploadItemCheckInPhotoFromUri,
+  getItemCheckInPhotoSignedUrl,
   type Item,
   type ItemStatus,
 } from 'shared';
@@ -55,6 +59,9 @@ export default function CheckInItemDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [checkInPreviewUrl, setCheckInPreviewUrl] = useState<string | null>(null);
+  const [checkInPreviewLoading, setCheckInPreviewLoading] = useState(false);
   const { event } = useEvent(typeof eventId === 'string' ? eventId : null);
 
   useEffect(() => {
@@ -80,6 +87,66 @@ export default function CheckInItemDetailsScreen() {
       router.back();
     }
   }, [item, eventId, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!item?.checkInPhotoStoragePath?.trim()) {
+      setCheckInPreviewUrl(null);
+      setCheckInPreviewLoading(false);
+      return;
+    }
+    setCheckInPreviewLoading(true);
+    getItemCheckInPhotoSignedUrl(item.checkInPhotoStoragePath, 7200)
+      .then((url) => {
+        if (!cancelled) setCheckInPreviewUrl(url);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckInPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [item?.id, item?.checkInPhotoStoragePath]);
+
+  const uploadAfterPick = useCallback(
+    async (uri: string, mimeType: string) => {
+      if (!item) return;
+      setPhotoUploading(true);
+      try {
+        const next = await uploadItemCheckInPhotoFromUri(item.id, uri, mimeType);
+        setItem(next);
+      } catch (error) {
+        Alert.alert('Photo', error instanceof Error ? error.message : 'Could not save check-in photo');
+      } finally {
+        setPhotoUploading(false);
+      }
+    },
+    [item]
+  );
+
+  const openCameraAndUpload = useCallback(async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert(
+        'Check-in photo',
+        'Taking a check-in photo requires the iOS or Android organizer app (camera is not available on web).'
+      );
+      return;
+    }
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Camera', 'Camera access is needed to take a check-in photo.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.72,
+      allowsEditing: false,
+    });
+    if (result.canceled === true || !result.assets?.[0]?.uri) return;
+    const asset = result.assets[0];
+    const mime = asset.mimeType ?? 'image/jpeg';
+    await uploadAfterPick(asset.uri, mime);
+  }, [uploadAfterPick]);
 
   const handleCheckIn = async () => {
     if (!item || item.status !== 'pending') return;
@@ -126,6 +193,34 @@ export default function CheckInItemDetailsScreen() {
     } finally {
       setPrinting(false);
     }
+  };
+
+  const handlePrintThenPhoto = async () => {
+    if (!item) return;
+    if (Platform.OS === 'web') {
+      Alert.alert(
+        'Print & photo',
+        'This shortcut needs the native app: printing on web is limited and the camera is unavailable here.'
+      );
+      return;
+    }
+    setPrinting(true);
+    try {
+      const ok = await printItemTag(item, undefined, event ?? null);
+      if (!ok) {
+        Alert.alert(
+          'Print',
+          'Fix printing first, then you can take a check-in photo with the separate button.'
+        );
+        return;
+      }
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Print failed');
+      return;
+    } finally {
+      setPrinting(false);
+    }
+    await openCameraAndUpload();
   };
 
   const handleBack = () => {
@@ -198,11 +293,58 @@ export default function CheckInItemDetailsScreen() {
         )}
       </View>
 
+      <View style={styles.photoSection}>
+        <Text style={styles.sectionTitle}>Check-in photo (optional)</Text>
+        <Text style={styles.photoHint}>
+          Staff can photograph the item with its tag when printing. At POS, that photo helps confirm the physical item
+          matches this record (reduces tag switching).
+        </Text>
+        {checkInPreviewLoading ? (
+          <ActivityIndicator style={styles.photoSpinner} color="#007AFF" />
+        ) : checkInPreviewUrl ? (
+          <Image
+            source={{ uri: checkInPreviewUrl }}
+            style={styles.checkInPhoto}
+            resizeMode="cover"
+            accessibilityLabel="Check-in reference photo"
+          />
+        ) : (
+          <Text style={styles.photoEmpty}>No check-in photo yet</Text>
+        )}
+        {item.checkInPhotoCapturedAt ? (
+          <Text style={styles.photoMeta}>
+            Captured {new Date(item.checkInPhotoCapturedAt).toLocaleString()}
+          </Text>
+        ) : null}
+        <TouchableOpacity
+          style={[styles.photoButton, (photoUploading || printing || updating) && styles.buttonDisabled]}
+          onPress={openCameraAndUpload}
+          disabled={photoUploading || printing || updating}
+        >
+          {photoUploading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.photoButtonText}>
+              {item.checkInPhotoStoragePath ? 'Retake check-in photo' : 'Take check-in photo'}
+            </Text>
+          )}
+        </TouchableOpacity>
+        {Platform.OS !== 'web' ? (
+          <TouchableOpacity
+            style={[styles.photoButtonSecondary, (photoUploading || printing || updating) && styles.buttonDisabled]}
+            onPress={handlePrintThenPhoto}
+            disabled={photoUploading || printing || updating}
+          >
+            <Text style={styles.photoButtonSecondaryText}>Print label &amp; take photo</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
       <View style={styles.actions}>
         <TouchableOpacity
-          style={[styles.secondaryButton, (printing || updating) && styles.buttonDisabled]}
+          style={[styles.secondaryButton, (printing || updating || photoUploading) && styles.buttonDisabled]}
           onPress={handlePrintTag}
-          disabled={printing || updating}
+          disabled={printing || updating || photoUploading}
         >
           {printing ? (
             <ActivityIndicator color="#007AFF" />
@@ -212,9 +354,9 @@ export default function CheckInItemDetailsScreen() {
         </TouchableOpacity>
         {item.status === 'pending' && (
           <TouchableOpacity
-            style={[styles.primaryButton, updating && styles.buttonDisabled]}
+            style={[styles.primaryButton, (updating || photoUploading) && styles.buttonDisabled]}
             onPress={handleCheckIn}
-            disabled={updating}
+            disabled={updating || photoUploading}
           >
             {updating ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -225,9 +367,9 @@ export default function CheckInItemDetailsScreen() {
         )}
         {item.status === 'checked_in' && (
           <TouchableOpacity
-            style={[styles.primaryButton, updating && styles.buttonDisabled]}
+            style={[styles.primaryButton, (updating || photoUploading) && styles.buttonDisabled]}
             onPress={handleMarkForSale}
-            disabled={updating}
+            disabled={updating || photoUploading}
           >
             {updating ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -303,6 +445,46 @@ const styles = StyleSheet.create({
     borderColor: '#007AFF',
   },
   secondaryButtonText: { color: '#007AFF', fontSize: 18, fontWeight: '600' },
+  photoSection: {
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+    marginTop: 12,
+    marginHorizontal: 20,
+    borderRadius: 12,
+  },
+  photoHint: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  photoSpinner: { marginVertical: 16 },
+  checkInPhoto: {
+    width: '100%',
+    height: 200,
+    borderRadius: 8,
+    backgroundColor: '#ECECEC',
+    marginBottom: 8,
+  },
+  photoEmpty: { fontSize: 14, color: '#888', marginBottom: 8 },
+  photoMeta: { fontSize: 12, color: '#888', marginBottom: 12 },
+  photoButton: {
+    backgroundColor: '#5856D6',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  photoButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  photoButtonSecondary: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#5856D6',
+  },
+  photoButtonSecondaryText: { color: '#5856D6', fontSize: 16, fontWeight: '600' },
   errorText: { fontSize: 18, fontWeight: '600', color: '#DC3545', marginBottom: 20 },
   backButton: { backgroundColor: '#007AFF', borderRadius: 8, paddingHorizontal: 24, paddingVertical: 12 },
   backButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },

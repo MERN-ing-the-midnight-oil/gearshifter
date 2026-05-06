@@ -25,12 +25,6 @@ export default function AppStackLayout() {
         }}
       />
       <Stack.Screen
-        name="events"
-        options={{
-          title: 'Events',
-        }}
-      />
-      <Stack.Screen
         name="items"
         options={{
           title: 'My Items',

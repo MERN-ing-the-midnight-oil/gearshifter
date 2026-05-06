@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import type { Seller } from '../types/models';
 import { generateSellerQRCode } from '../utils/qrCode';
-import { sellerPlaceholderEmailForAuthUserId } from '../utils/phone';
+import { sellerPlaceholderEmailForAuthUserId, tryNormalizePhoneE164US } from '../utils/phone';
 import { generateSecureAccessToken } from '../utils/accessToken';
 
 /**
@@ -319,12 +319,15 @@ export const resolveSellerAfterPhoneSignIn = async (
   authUserId: string,
   phoneE164: string
 ): Promise<ResolveSellerAfterPhoneSignInResult> => {
+  const phoneNormalized =
+    tryNormalizePhoneE164US(phoneE164) ?? (phoneE164.trim().startsWith('+') ? phoneE164.trim() : phoneE164.trim());
+
   const existingByAuth = await getCurrentSeller(authUserId);
   if (existingByAuth) {
     return { kind: 'existing', seller: existingByAuth };
   }
 
-  const byPhone = await getSellerByPhone(phoneE164);
+  const byPhone = await getSellerByPhone(phoneNormalized);
   if (!byPhone) {
     return { kind: 'needs_profile' };
   }
@@ -355,21 +358,46 @@ export interface CreateSellerAfterPhoneProfileInput {
   contactEmail?: string | null;
 }
 
+function isPostgresUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { code?: string; message?: string; status?: number };
+  if (e.code === '23505') return true;
+  if (e.status === 409) return true;
+  const m = typeof e.message === 'string' ? e.message : '';
+  return m.includes('duplicate key') || m.includes('unique constraint');
+}
+
 export const createSellerAfterPhoneProfile = async (
   input: CreateSellerAfterPhoneProfileInput
 ): Promise<Seller> => {
+  const phoneNormalized =
+    tryNormalizePhoneE164US(input.phoneE164) ??
+    (input.phoneE164.trim().startsWith('+') ? input.phoneE164.trim() : input.phoneE164.trim());
+
+  const already = await getCurrentSeller(input.authUserId);
+  if (already) return already;
+
   const trimmedEmail = input.contactEmail?.trim();
   const email =
     trimmedEmail && trimmedEmail.includes('@')
       ? trimmedEmail.toLowerCase()
       : sellerPlaceholderEmailForAuthUserId(input.authUserId);
 
-  return createSeller(input.authUserId, {
-    firstName: input.firstName.trim(),
-    lastName: input.lastName.trim(),
-    phone: input.phoneE164,
-    email,
-  });
+  try {
+    return await createSeller(input.authUserId, {
+      firstName: input.firstName.trim(),
+      lastName: input.lastName.trim(),
+      phone: phoneNormalized,
+      email,
+    });
+  } catch (err: unknown) {
+    if (!isPostgresUniqueViolation(err)) throw err;
+    const afterRace = await getCurrentSeller(input.authUserId);
+    if (afterRace) return afterRace;
+    throw new Error(
+      'That phone number is already tied to another seller record (for example a walk-in check-in). Ask the organizer to update the existing profile, or sign in with a different phone number.'
+    );
+  }
 };
 
 /**

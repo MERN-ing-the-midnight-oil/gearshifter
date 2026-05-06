@@ -33,6 +33,7 @@ export default function TagPreviewMockup({
     const fieldInfo = availableFields.find((f) => f.name === field.field);
     return {
       label: field.label || fieldInfo?.defaultLabel || fieldInfo?.label || field.field,
+      hideLabelOnTag: Boolean(field.hideLabelOnTag),
       fontSize: field.fontSize || 10,
       maxLength: field.maxLength ?? 30,
     };
@@ -77,10 +78,10 @@ export default function TagPreviewMockup({
           {/* Content area: fields flow with word wrap */}
           <View style={[styles.contentArea, contentPadding]}>
             {tagFields.map((field, index) => {
-              const { label, fontSize, maxLength } = getFieldDisplayInfo(field);
+              const { label, hideLabelOnTag, fontSize, maxLength } = getFieldDisplayInfo(field);
               const scaledFontSize = Math.max(8, fontSize * scale * 0.9);
               const sampleValue = 'X'.repeat(Math.min(maxLength, 16));
-              const displayText = `${label}: ${sampleValue}`;
+              const displayText = hideLabelOnTag ? sampleValue : `${label}: ${sampleValue}`;
 
               return (
                 <Text

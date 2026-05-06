@@ -2,13 +2,21 @@ import type { Event } from '../types/models';
 
 /**
  * Whether sellers may start a new swap registration for this event.
- * Matches seller event detail: calendar window plus workflow status `registration`, and not archived.
+ * Uses calendar window on `registrationOpenDate` / optional `registrationCloseDate`, plus `status === 'active'`
+ * (event status is `active` | `closed` after the workflow enum simplification).
  */
 export function isSellerSwapRegistrationWindowOpen(event: Event, now: Date = new Date()): boolean {
   if (event.archivedAt) return false;
-  if (!event.registrationOpenDate || !event.registrationCloseDate) return false;
+  if (event.status !== 'active') return false;
+  if (!event.registrationOpenDate) return false;
+
   const open = new Date(event.registrationOpenDate);
-  const close = new Date(event.registrationCloseDate);
-  const status = event.status as string;
-  return now >= open && now <= close && status === 'registration';
+  if (now < open) return false;
+
+  if (event.registrationCloseDate) {
+    const close = new Date(event.registrationCloseDate);
+    if (now > close) return false;
+  }
+
+  return true;
 }

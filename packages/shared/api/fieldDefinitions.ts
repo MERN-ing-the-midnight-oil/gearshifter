@@ -54,6 +54,23 @@ export const getEventFieldDefinitions = async (
 };
 
 /**
+ * Field definitions scoped to a single item category (excludes org-wide rows).
+ */
+export const getItemFieldDefinitionsForCategory = async (
+  categoryId: string
+): Promise<ItemFieldDefinition[]> => {
+  const { data, error } = await supabase
+    .from('item_field_definitions')
+    .select('*')
+    .eq('category_id', categoryId)
+    .order('display_order', { ascending: true })
+    .order('label', { ascending: true });
+
+  if (error) throw error;
+  return (data || []).map(mapFieldDefinitionFromDb);
+};
+
+/**
  * Create a new field definition
  */
 export const createFieldDefinition = async (

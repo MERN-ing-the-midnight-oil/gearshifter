@@ -31,22 +31,17 @@ export function SellerEventInvitePanel({ eventId, eventName }: Props) {
   const [copiedWeb, setCopiedWeb] = useState(false);
   const [copiedNative, setCopiedNative] = useState(false);
 
-  const nativeRegistrationUrl = buildSellerEventDeepLink(eventId, 'register');
-  const nativeEventPageUrl = buildSellerEventDeepLink(eventId, 'event');
-
-  const webRegistrationUrl = SELLER_WEB_INVITE_ORIGIN
-    ? buildSellerEventWebInviteUrl(SELLER_WEB_INVITE_ORIGIN, eventId, 'register')
-    : '';
-  const webEventPageUrl = SELLER_WEB_INVITE_ORIGIN
-    ? buildSellerEventWebInviteUrl(SELLER_WEB_INVITE_ORIGIN, eventId, 'event')
+  const nativeInviteUrl = buildSellerEventDeepLink(eventId);
+  const webInviteUrl = SELLER_WEB_INVITE_ORIGIN
+    ? buildSellerEventWebInviteUrl(SELLER_WEB_INVITE_ORIGIN, eventId)
     : '';
 
-  const qrRegistrationValue = webRegistrationUrl || nativeRegistrationUrl;
+  const qrValue = webInviteUrl || nativeInviteUrl;
 
-  const shareRegistration = async () => {
-    const title = eventName?.trim() ? `Register for ${eventName.trim()}` : 'Register for our swap';
-    const primary = webRegistrationUrl || nativeRegistrationUrl;
-    const secondary = webRegistrationUrl ? `\n\nNative app link:\n${nativeRegistrationUrl}` : '';
+  const shareInvite = async () => {
+    const title = eventName?.trim() ? `Join ${eventName.trim()} (seller app)` : 'Join our swap (seller app)';
+    const primary = webInviteUrl || nativeInviteUrl;
+    const secondary = webInviteUrl ? `\n\nNative app link:\n${nativeInviteUrl}` : '';
     try {
       await Share.share({
         title,
@@ -58,21 +53,21 @@ export function SellerEventInvitePanel({ eventId, eventName }: Props) {
     }
   };
 
-  const copyRegistration = async () => {
-    await Clipboard.setStringAsync(qrRegistrationValue);
+  const copyInvite = async () => {
+    await Clipboard.setStringAsync(qrValue);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const copyNativeRegistration = async () => {
-    await Clipboard.setStringAsync(nativeRegistrationUrl);
+  const copyNativeInvite = async () => {
+    await Clipboard.setStringAsync(nativeInviteUrl);
     setCopiedNative(true);
     setTimeout(() => setCopiedNative(false), 2000);
   };
 
-  const copyWebRegistration = async () => {
-    if (!webRegistrationUrl) return;
-    await Clipboard.setStringAsync(webRegistrationUrl);
+  const copyWebInvite = async () => {
+    if (!webInviteUrl) return;
+    await Clipboard.setStringAsync(webInviteUrl);
     setCopiedWeb(true);
     setTimeout(() => setCopiedWeb(false), 2000);
   };
@@ -80,70 +75,51 @@ export function SellerEventInvitePanel({ eventId, eventName }: Props) {
   return (
     <View style={styles.panel}>
       <Text style={styles.lead}>
-        {webRegistrationUrl
-          ? 'QR and primary “Copy / Share” target your local seller Expo web URL. Native app links are shown below for device testing.'
-          : 'Share this link or QR code so sellers can open the swap in the Gear Swap seller app and complete registration.'}
+        {webInviteUrl
+          ? 'QR and primary “Copy / Share” use your seller web URL. Native links below are for devices with the seller app installed.'
+          : 'Share this link or QR so sellers open the swap in the Gear Swap seller app (they sign in with phone to join).'}
       </Text>
       <View style={styles.qrWrap}>
-        <QRCode value={qrRegistrationValue} size={176} backgroundColor={theme.surface} color={theme.text} />
+        <QRCode value={qrValue} size={176} backgroundColor={theme.surface} color={theme.text} />
       </View>
-      <Text style={styles.label}>
-        {webRegistrationUrl ? 'Registration URL (QR uses this)' : 'Registration link (QR uses this)'}
-      </Text>
+      <Text style={styles.label}>{webInviteUrl ? 'Seller invite URL (QR uses this)' : 'Seller invite link (QR uses this)'}</Text>
       <Text selectable style={styles.url}>
-        {qrRegistrationValue}
+        {qrValue}
       </Text>
       <View style={styles.row}>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={copyRegistration}>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={copyInvite}>
           <Text style={styles.secondaryBtnText}>{copied ? 'Copied' : 'Copy link'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.primaryBtn} onPress={shareRegistration}>
+        <TouchableOpacity style={styles.primaryBtn} onPress={shareInvite}>
           <Text style={styles.primaryBtnText}>Share…</Text>
         </TouchableOpacity>
       </View>
-      {webRegistrationUrl ? (
-        <TouchableOpacity style={styles.openWebBtn} onPress={() => Linking.openURL(webRegistrationUrl)}>
-          <Text style={styles.openWebBtnText}>Open registration in browser</Text>
+      {webInviteUrl ? (
+        <TouchableOpacity style={styles.openWebBtn} onPress={() => Linking.openURL(webInviteUrl)}>
+          <Text style={styles.openWebBtnText}>Open in browser</Text>
         </TouchableOpacity>
       ) : null}
 
-      {webRegistrationUrl ? (
+      {webInviteUrl ? (
         <View style={styles.devDivider}>
-          <Text style={styles.devHeading}>Native app (phones with seller app installed)</Text>
+          <Text style={styles.devHeading}>Native app (seller app installed)</Text>
           <Text selectable style={styles.urlSmall}>
-            {nativeRegistrationUrl}
+            {nativeInviteUrl}
           </Text>
-          <TouchableOpacity style={styles.inlineCopy} onPress={copyNativeRegistration}>
+          <TouchableOpacity style={styles.inlineCopy} onPress={copyNativeInvite}>
             <Text style={styles.inlineCopyText}>
-              {copiedNative ? 'Copied native link' : 'Copy native registration link'}
+              {copiedNative ? 'Copied native link' : 'Copy native link'}
             </Text>
           </TouchableOpacity>
-          <Text style={styles.label}>Event page (native)</Text>
-          <Text selectable style={styles.urlSmall}>
-            {nativeEventPageUrl}
-          </Text>
         </View>
-      ) : (
-        <>
-          <Text style={styles.label}>Event page link (browse details)</Text>
-          <Text selectable style={styles.urlSmall}>
-            {nativeEventPageUrl}
-          </Text>
-        </>
-      )}
+      ) : null}
 
-      {webRegistrationUrl ? (
+      {webInviteUrl ? (
         <View style={styles.devDivider}>
-          <Text style={styles.label}>Event page (browser)</Text>
-          <Text selectable style={styles.urlSmall}>
-            {webEventPageUrl}
-          </Text>
+          <Text style={styles.label}>Copy web URL only</Text>
           <View style={styles.row}>
-            <TouchableOpacity style={styles.secondaryBtn} onPress={copyWebRegistration}>
-              <Text style={styles.secondaryBtnText}>{copiedWeb ? 'Copied' : 'Copy event URL'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.primaryBtn} onPress={() => Linking.openURL(webEventPageUrl)}>
-              <Text style={styles.primaryBtnText}>Open</Text>
+            <TouchableOpacity style={styles.secondaryBtn} onPress={copyWebInvite}>
+              <Text style={styles.secondaryBtnText}>{copiedWeb ? 'Copied' : 'Copy web URL'}</Text>
             </TouchableOpacity>
           </View>
         </View>

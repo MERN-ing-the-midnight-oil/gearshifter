@@ -26,7 +26,7 @@ export function flattenItemCategoriesForPicker(categories: ItemCategory[]): Arra
 }
 
 /**
- * Limit a category tree to UUIDs allowed for an event (from `events.settings.allowedItemCategoryIds`).
+ * Limit a category tree to UUIDs allowed for an event (`events.settings.allowedItemCategoryIds`).
  */
 export function filterItemCategoriesByAllowedIds(
   categories: ItemCategory[],
@@ -50,32 +50,7 @@ export function filterItemCategoriesByAllowedIds(
 }
 
 /**
- * Limit a category tree to IDs the seller chose at swap registration (`_gf_planned_item_category_ids`).
- * If a parent id was selected, that branch is kept in full; if only leaves were selected, only those branches remain.
- */
-export function filterItemCategoriesBySellerPlan(
-  categories: ItemCategory[],
-  plannedIds: Set<string>
-): ItemCategory[] {
-  return categories
-    .map((c) => {
-      const children = c.children?.length
-        ? filterItemCategoriesBySellerPlan(c.children, plannedIds)
-        : [];
-      const self = plannedIds.has(c.id);
-      if (self) {
-        return { ...c, children: c.children };
-      }
-      if (children.length > 0) {
-        return { ...c, children };
-      }
-      return null;
-    })
-    .filter((c): c is ItemCategory => c !== null);
-}
-
-/**
- * Org item categories for an event: full org tree unless the event restricts `settings.allowedItemCategoryIds`.
+ * Org item categories for an event: full org catalog unless the event restricts `settings.allowedItemCategoryIds`.
  */
 export const getEventItemCategoryTree = async (eventId: string): Promise<ItemCategory[]> => {
   const { data: row, error } = await supabase

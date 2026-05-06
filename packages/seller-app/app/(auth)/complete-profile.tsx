@@ -10,13 +10,33 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { createSellerAfterPhoneProfile, getCurrentSeller, getCurrentUser } from 'shared';
-import { resolveSellerPostAuthRedirect } from '../../lib/postAuthRedirect';
+import {
+  createSellerAfterPhoneProfile,
+  getCurrentSeller,
+  getCurrentUser,
+  tryNormalizePhoneE164US,
+} from 'shared';
+import {
+  extractEventIdFromSellerRedirect,
+  resolveSellerPostAuthRedirect,
+} from '../../lib/postAuthRedirect';
+import { setSellerDashboardEventId } from '../../lib/sellerDashboardEventStorage';
 import { theme } from '../../lib/theme';
+
+function effectiveSellerSessionPhone(userPhone: string | undefined, phoneParam: string | undefined): string {
+  const fromUser = typeof userPhone === 'string' ? userPhone.trim() : '';
+  const param = typeof phoneParam === 'string' ? phoneParam.trim() : '';
+  const raw = fromUser || param;
+  if (!raw) return '';
+  return tryNormalizePhoneE164US(raw) ?? (raw.startsWith('+') ? raw : raw);
+}
 
 export default function CompleteSellerProfileScreen() {
   const router = useRouter();
-  const { redirect } = useLocalSearchParams<{ redirect?: string }>();
+  const { redirect, phone: phoneParam } = useLocalSearchParams<{
+    redirect?: string;
+    phone?: string;
+  }>();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [emailOptional, setEmailOptional] = useState('');
@@ -28,12 +48,15 @@ export default function CompleteSellerProfileScreen() {
     (async () => {
       try {
         const user = await getCurrentUser();
-        if (!user?.id || !user.phone) {
+        const sessionPhone = effectiveSellerSessionPhone(user.phone, phoneParam);
+        if (!user?.id || !sessionPhone) {
           router.replace('/(auth)/login');
           return;
         }
         const existing = await getCurrentSeller(user.id);
         if (!cancelled && existing) {
+          const eid = extractEventIdFromSellerRedirect(redirect);
+          if (eid) await setSellerDashboardEventId(eid);
           router.replace(resolveSellerPostAuthRedirect(redirect));
         }
       } catch {
@@ -45,7 +68,7 @@ export default function CompleteSellerProfileScreen() {
     return () => {
       cancelled = true;
     };
-  }, [redirect, router]);
+  }, [redirect, router, phoneParam]);
 
   const handleSubmit = async () => {
     if (!firstName.trim() || !lastName.trim()) {
@@ -56,19 +79,22 @@ export default function CompleteSellerProfileScreen() {
     setBusy(true);
     try {
       const user = await getCurrentUser();
-      if (!user?.id || !user.phone) {
+      const sessionPhone = effectiveSellerSessionPhone(user.phone, phoneParam);
+      if (!user?.id || !sessionPhone) {
         router.replace('/(auth)/login');
         return;
       }
 
       await createSellerAfterPhoneProfile({
         authUserId: user.id,
-        phoneE164: user.phone,
+        phoneE164: sessionPhone,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         contactEmail: emailOptional.trim() || null,
       });
 
+      const eid = extractEventIdFromSellerRedirect(redirect);
+      if (eid) await setSellerDashboardEventId(eid);
       router.replace(resolveSellerPostAuthRedirect(redirect));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Could not save profile';

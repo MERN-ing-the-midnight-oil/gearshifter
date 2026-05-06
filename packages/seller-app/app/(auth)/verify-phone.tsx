@@ -9,14 +9,8 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import {
-  getCurrentUser,
-  mintSellerAccessTokenIfMissing,
-  resolveSellerAfterPhoneSignIn,
-  signInWithPhone,
-  verifyPhoneOTP,
-} from 'shared';
-import { resolveSellerPostAuthRedirect } from '../../lib/postAuthRedirect';
+import { signInWithPhone, verifyPhoneOTP } from 'shared';
+import { continueSellerFlowAfterPhoneAuth } from '../../lib/afterSellerPhoneSession';
 import { theme } from '../../lib/theme';
 
 export default function VerifyPhoneScreen() {
@@ -40,29 +34,11 @@ export default function VerifyPhoneScreen() {
 
     setBusy(true);
     try {
-      await verifyPhoneOTP(phoneE164, token);
-      const user = await getCurrentUser();
-      if (!user?.id) {
-        throw new Error('Signed in, but user profile is missing. Try again.');
-      }
-      const sessionPhone = user.phone;
-      if (!sessionPhone) {
-        throw new Error('Your account has no phone on file after sign-in.');
-      }
-
-      const resolved = await resolveSellerAfterPhoneSignIn(user.id, sessionPhone);
-      if (resolved.kind !== 'needs_profile') {
-        await mintSellerAccessTokenIfMissing(user.id);
-      }
-      if (resolved.kind === 'needs_profile') {
-        router.replace({
-          pathname: '/(auth)/complete-profile',
-          ...(redirect ? { params: { redirect: String(redirect) } } : {}),
-        });
-        return;
-      }
-
-      router.replace(resolveSellerPostAuthRedirect(redirect));
+      const otpResult = await verifyPhoneOTP(phoneE164, token);
+      await continueSellerFlowAfterPhoneAuth(router, redirect, {
+        knownPhoneE164: phoneE164,
+        sessionUser: otpResult?.user ?? null,
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Verification failed';
       Alert.alert('Could not verify', message);

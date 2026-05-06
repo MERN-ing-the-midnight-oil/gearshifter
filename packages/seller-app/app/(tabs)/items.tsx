@@ -7,10 +7,9 @@ import {
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
-import { StaffItemQrSection } from '../../components/StaffItemQrSection';
 import {
   useAuth,
-  useItems,
+  useItemsByEvent,
   getCurrentSeller,
   deleteSellerPendingItem,
   getSellerFacingItemTitle,
@@ -21,6 +20,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
 import { confirmAction } from '../../lib/alerts';
+import { useSellerScopedEventId } from '../../lib/useSellerScopedEventId';
 
 function statusBadgeStyle(status: ItemStatus) {
   switch (status) {
@@ -42,7 +42,11 @@ export default function ItemsScreen() {
   const { user, loading: authLoading } = useAuth();
   const [sellerRecordId, setSellerRecordId] = useState<string | null>(null);
   const [sellerLookupDone, setSellerLookupDone] = useState(false);
-  const { items, loading: itemsLoading, refetch, removeItemFromList } = useItems(sellerRecordId);
+  const { scopedEventId, scopeReady } = useSellerScopedEventId(sellerRecordId);
+  const { items, loading: itemsLoading, refetch, removeItemFromList } = useItemsByEvent(
+    sellerRecordId,
+    scopedEventId
+  );
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -92,7 +96,7 @@ export default function ItemsScreen() {
     });
   };
 
-  if (authLoading || !sellerLookupDone) {
+  if (authLoading || !sellerLookupDone || !scopeReady) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -110,6 +114,18 @@ export default function ItemsScreen() {
     );
   }
 
+  if (!scopedEventId) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.title}>My items</Text>
+        <Text style={styles.muted}>
+          Open your organizer&apos;s sign-up link to link this app to your sale, then return here. You can also
+          use the Seller Event View tab once the event is linked.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.container}
@@ -117,7 +133,8 @@ export default function ItemsScreen() {
     >
       <View style={styles.header}>
         <Text style={styles.subtitle}>
-          You can edit or remove items only while they are still pre-registered (before staff check-in at the event).
+          Items for your linked event only. You can edit or remove items while they are still pre-registered
+          (before staff check-in at the event).
         </Text>
       </View>
       {itemsLoading && !refreshing ? (
@@ -125,7 +142,9 @@ export default function ItemsScreen() {
           <ActivityIndicator size="large" color="#007AFF" />
         </View>
       ) : items.length === 0 ? (
-        <Text style={styles.empty}>No items yet. Pre-register items from the Seller Event View tab.</Text>
+        <Text style={styles.empty}>
+          No items yet for this event. Pre-register items from the Seller Event View tab.
+        </Text>
       ) : (
         items.map((item) => (
           <View key={item.id} style={styles.card}>
@@ -138,11 +157,6 @@ export default function ItemsScreen() {
               </View>
             </View>
             <Text style={styles.meta}>#{item.itemNumber}</Text>
-            <StaffItemQrSection
-              qrCode={item.qrCode}
-              itemNumber={item.itemNumber}
-              show={item.status === 'pending'}
-            />
             <View style={styles.footer}>
               {item.status === 'pending' ? (
                 <View style={styles.pendingActions}>

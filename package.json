@@ -9,6 +9,8 @@
     "nohoist": [
       "**/expo",
       "**/expo/**",
+      "**/expo-image-picker",
+      "**/expo-image-picker/**",
       "**/expo-router",
       "**/expo-router/**",
       "**/@expo/**",

@@ -132,9 +132,15 @@ export interface SwapRegistrationPageSettings {
 export type TagLayoutType = 'standard' | 'compact' | 'detailed';
 export type QRCodePosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
 
+/** Allowed input/value types for tag field values (stored on template JSON). */
+export type TagFieldDataType = 'text' | 'any' | 'boolean' | 'number' | 'integer' | 'dropdown';
+
 export interface TagField {
   field: string; // Field name (e.g., "item_number", "description", "price")
-  label?: string; // Display label (e.g., "Item #", "Price")
+  /** Field name shown to sellers in forms; also prefixed on the printed tag unless `hideLabelOnTag`. */
+  label?: string;
+  /** When true, the printed tag shows only the value (no "Field name: …" prefix). Seller UI still uses `label`. */
+  hideLabelOnTag?: boolean;
   /** @deprecated Use flow layout - fields are ordered by array index. Kept for backward compat. */
   position?: { x: number; y: number };
   maxLength?: number; // Max characters before truncation (for word wrap / layout)
@@ -142,6 +148,10 @@ export interface TagField {
   fontWeight?: 'normal' | 'bold';
   required: boolean; // True if this field must be present on the tag
   format?: string; // Optional format string (e.g., "$%.2f" for price)
+  /** What sellers enter for this field; omit or `text` for legacy. `any` is freeform text with no validation/coercion. */
+  dataType?: TagFieldDataType;
+  /** Choices when `dataType` is `dropdown` (empty strings ignored when saving). */
+  dropdownOptions?: string[];
 }
 
 export interface GearTagTemplate {
@@ -234,7 +244,7 @@ export interface EventSettings {
   allowSellerPriceDrops?: boolean;
   maxSellerPriceDrops?: number;
   minTimeBetweenSellerPriceDrops?: number; // in minutes
-  /** When non-empty, only these org item category UUIDs are offered for this event (seller register + add-item). */
+  /** When non-empty, only these org item category UUIDs are offered as item types for this event (seller pre-register). */
   allowedItemCategoryIds?: string[];
   [key: string]: unknown; // Allow other settings
 }
@@ -334,6 +344,9 @@ export interface Item {
   customFields: Record<string, unknown>; // Dynamic field values
   status: ItemStatus;
   qrCode: string;
+  /** Storage path in `item-check-in-photos` bucket; org-only access. */
+  checkInPhotoStoragePath?: string;
+  checkInPhotoCapturedAt?: Date;
   checkedInAt?: Date;
   soldAt?: Date;
   soldPrice?: number;

@@ -641,6 +641,10 @@ function mapItemFromDb(dbItem: any): Item {
     customFields: (dbItem.custom_fields as Record<string, unknown>) || {},
     status: dbItem.status as ItemStatus,
     qrCode: dbItem.qr_code,
+    checkInPhotoStoragePath: dbItem.check_in_photo_storage_path ?? undefined,
+    checkInPhotoCapturedAt: dbItem.check_in_photo_captured_at
+      ? new Date(dbItem.check_in_photo_captured_at)
+      : undefined,
     checkedInAt: dbItem.checked_in_at ? new Date(dbItem.checked_in_at) : undefined,
     soldAt: dbItem.sold_at ? new Date(dbItem.sold_at) : undefined,
     soldPrice: dbItem.sold_price,

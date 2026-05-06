@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
 import { theme } from '../../lib/theme';
+import { EventStackBreadcrumbs } from '../../components/OrganizerBreadcrumbs';
 
 export default function EventLayout() {
   return (
@@ -12,6 +13,8 @@ export default function EventLayout() {
         headerTitleStyle: {
           color: theme.text,
         },
+        headerTitleAlign: 'left',
+        headerTitle: () => <EventStackBreadcrumbs />,
       }}
     >
       <Stack.Screen name="manage" options={{ title: 'Manage Event' }} />

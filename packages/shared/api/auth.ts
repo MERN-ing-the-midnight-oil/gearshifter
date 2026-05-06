@@ -1,4 +1,6 @@
-import { supabase } from './supabase';
+import type { User } from '@supabase/supabase-js';
+import { supabase, supabaseAnonKey, supabaseUrl } from './supabase';
+import { syncSellerDashboardEventToAuthSession } from './sellerDashboardSession';
 import { createSeller } from './sellers';
 import { createOrganization } from './organizations';
 import type { AdminCapabilities, AdminPermissions } from '../types/models';
@@ -104,6 +106,74 @@ export const verifyPhoneOTP = async (phone: string, token: string) => {
 
   if (error) throw error;
   return data;
+};
+
+/**
+ * Dev placeholder: same outcome as SMS OTP verify — real Supabase session via Edge Function
+ * (admin creates/updates phone user + password sign-in). Server allows it only for local Supabase
+ * or when Edge secret ALLOW_DEV_PHONE_BYPASS=true.
+ *
+ * Uses `fetch` instead of `supabase.functions.invoke` so Expo Web behaves reliably with CORS/network errors.
+ *
+ * @returns Auth user from the new session (use this immediately; `getUser()` can lag right after `setSession`).
+ */
+export const devBypassPhoneVerificationSession = async (phoneE164: string): Promise<User> => {
+  const fnUrl = `${supabaseUrl}/functions/v1/dev-phone-session-bypass`;
+
+  let res: Response;
+  try {
+    res = await fetch(fnUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${supabaseAnonKey}`,
+        apikey: supabaseAnonKey,
+      },
+      body: JSON.stringify({ phone: phoneE164 }),
+    });
+  } catch (err) {
+    const inner = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Could not reach ${fnUrl} (${inner}). Deploy the dev-phone-session-bypass function; for hosted Supabase set secret ALLOW_DEV_PHONE_BYPASS=true.`
+    );
+  }
+
+  let payload: { error?: string; access_token?: string; refresh_token?: string };
+  try {
+    payload = (await res.json()) as typeof payload;
+  } catch {
+    throw new Error(
+      `Edge Function returned non-JSON (HTTP ${res.status}). Deploy dev-phone-session-bypass and try again.`
+    );
+  }
+
+  if (!res.ok) {
+    throw new Error(
+      typeof payload.error === 'string' && payload.error
+        ? payload.error
+        : `Edge Function HTTP ${res.status}. Deploy dev-phone-session-bypass; hosted projects need ALLOW_DEV_PHONE_BYPASS=true.`
+    );
+  }
+
+  if (typeof payload.error === 'string' && payload.error) {
+    throw new Error(payload.error);
+  }
+
+  if (!payload.access_token || !payload.refresh_token) {
+    throw new Error('Edge Function returned no session tokens');
+  }
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+    access_token: payload.access_token,
+    refresh_token: payload.refresh_token,
+  });
+  if (sessionError) throw sessionError;
+  const user = sessionData.session?.user;
+  if (!user?.id) {
+    throw new Error('Session established but user is missing. Try again.');
+  }
+  return user;
 };
 
 /**
@@ -656,12 +726,19 @@ export const exchangeSellerOpaqueTokenForAuthSession = async (
   return payload as ExchangeSellerSessionPayload;
 };
 
-export const signInWithSellerOpaqueToken = async (sellerOpaqueToken: string) => {
+export const signInWithSellerOpaqueToken = async (
+  sellerOpaqueToken: string,
+  options?: { dashboardEventId?: string | null }
+) => {
   const tokens = await exchangeSellerOpaqueTokenForAuthSession(sellerOpaqueToken);
   const { error } = await supabase.auth.setSession({
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
   });
   if (error) throw error;
+  const eid = options?.dashboardEventId?.trim();
+  if (eid) {
+    await syncSellerDashboardEventToAuthSession(eid);
+  }
 };
 

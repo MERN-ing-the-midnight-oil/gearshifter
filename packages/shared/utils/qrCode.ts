@@ -4,6 +4,7 @@
 import { QR_CODE_PREFIX } from '../constants/config';
 import type { Item } from '../types/models';
 import type { GearTagTemplate } from '../types/models';
+import { isForbiddenShadowPriceTagFieldName } from './tagTemplateFields';
 
 /** Organizer app scheme (see packages/organizer-app/app.json). */
 export const ORGANIZER_APP_SCHEME = 'organizer';
@@ -11,39 +12,34 @@ export const ORGANIZER_APP_SCHEME = 'organizer';
 /** Seller app scheme (see packages/seller-app/app.json). */
 export const SELLER_APP_SCHEME = 'seller';
 
-/** Opens the seller app on the event detail route (`app/event/[id]/index.tsx`). */
-export type SellerEventDeepLinkScreen = 'event' | 'register';
+/** Opens the seller app on the event route (`app/event/[id]/index.tsx`). */
+export type SellerEventDeepLinkScreen = 'event';
 
 /**
  * Deep link for sellers to open an event in the Seller app (Expo Router).
- * Uses an empty host (`seller:///…`) so the path matches file routes `/event/:id` and `/event/:id/register`.
+ * Uses an empty host (`seller:///…`) so the path matches `/event/:id`.
+ * Legacy `/event/:id/register` links still parse in {@link parseSellerEventDeepLink} but new invites use the event path only.
  */
-export function buildSellerEventDeepLink(
-  eventId: string,
-  screen: SellerEventDeepLinkScreen = 'event'
-): string {
-  if (screen === 'register') {
-    return `${SELLER_APP_SCHEME}:///event/${eventId}/register`;
-  }
+export function buildSellerEventDeepLink(eventId: string, _screen: SellerEventDeepLinkScreen = 'event'): string {
   return `${SELLER_APP_SCHEME}:///event/${eventId}`;
 }
 
 /**
- * Same routes as {@link buildSellerEventDeepLink}, but as an absolute http(s) URL for Expo web
- * (e.g. `http://localhost:8082/event/<id>/register` when developing with `yarn dev:both`).
+ * Same route as {@link buildSellerEventDeepLink}, as an absolute http(s) URL for Expo web
+ * (e.g. `http://localhost:8082/event/<id>` when developing with `yarn dev:both`).
  */
 export function buildSellerEventWebInviteUrl(
   webOrigin: string,
   eventId: string,
-  screen: SellerEventDeepLinkScreen = 'event'
+  _screen: SellerEventDeepLinkScreen = 'event'
 ): string {
   const origin = webOrigin.replace(/\/$/, '');
-  const path = screen === 'register' ? `/event/${eventId}/register` : `/event/${eventId}`;
-  return `${origin}${path}`;
+  return `${origin}/event/${eventId}`;
 }
 
 /**
  * Parse seller event deep link from pasted text (custom scheme only).
+ * Accepts optional `/register` suffix for older printed links.
  */
 export function parseSellerEventDeepLink(
   raw: string
@@ -56,9 +52,7 @@ export function parseSellerEventDeepLink(
   if (parts.length === 0) return null;
   const eventId = parts[0];
   if (!eventId) return null;
-  const screen: SellerEventDeepLinkScreen =
-    parts[1] === 'register' ? 'register' : 'event';
-  return { eventId, screen };
+  return { eventId, screen: 'event' };
 }
 
 /**
@@ -219,8 +213,10 @@ export const generateItemQRCode = (
           break;
         // Custom fields
         default:
-          if (item.customFields && item.customFields[fieldName] !== undefined) {
-            qrData[fieldName] = item.customFields[fieldName];
+          if (!isForbiddenShadowPriceTagFieldName(fieldName)) {
+            if (item.customFields && item.customFields[fieldName] !== undefined) {
+              qrData[fieldName] = item.customFields[fieldName];
+            }
           }
           break;
       }
@@ -272,8 +268,10 @@ export const generateItemQRCodeForSeller = (
         break;
       // Add other seller-accessible fields
       default:
-        if (item.customFields && item.customFields[fieldName] !== undefined) {
-          qrData[fieldName] = item.customFields[fieldName];
+        if (!isForbiddenShadowPriceTagFieldName(fieldName)) {
+          if (item.customFields && item.customFields[fieldName] !== undefined) {
+            qrData[fieldName] = item.customFields[fieldName];
+          }
         }
         break;
     }

@@ -1,7 +1,31 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Modal,
+} from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
-import { useEvent, getItem, parseItemQRCode, getCurrentPrice, recordSale, getCurrentUser, type Item } from 'shared';
+import { useState, useEffect } from 'react';
+import {
+  useEvent,
+  getItem,
+  parseItemQRCode,
+  getCurrentPrice,
+  completePosSaleWithBuyerReceipt,
+  createPosReceiptIntent,
+  completePosReceiptIntent,
+  cancelPosReceiptIntent,
+  getItemCheckInPhotoSignedUrl,
+  normalizePhoneE164US,
+  type Item,
+} from 'shared';
 
 export default function POSScreen() {
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
@@ -16,6 +40,33 @@ export default function POSScreen() {
   const [buyerPhone, setBuyerPhone] = useState('');
   const [salePrice, setSalePrice] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [verifyPhotoUrl, setVerifyPhotoUrl] = useState<string | null>(null);
+  const [verifyPhotoLoading, setVerifyPhotoLoading] = useState(false);
+
+  const [receiptMode, setReceiptMode] = useState<'sms' | 'qr'>('sms');
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [qrIntentUrl, setQrIntentUrl] = useState<string | null>(null);
+  const [qrIntentToken, setQrIntentToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedItem?.checkInPhotoStoragePath?.trim()) {
+      setVerifyPhotoUrl(null);
+      setVerifyPhotoLoading(false);
+      return;
+    }
+    setVerifyPhotoLoading(true);
+    getItemCheckInPhotoSignedUrl(selectedItem.checkInPhotoStoragePath, 7200)
+      .then((url) => {
+        if (!cancelled) setVerifyPhotoUrl(url);
+      })
+      .finally(() => {
+        if (!cancelled) setVerifyPhotoLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedItem?.id, selectedItem?.checkInPhotoStoragePath]);
 
   const handleScanItem = async () => {
     if (!qrCodeInput.trim()) {
@@ -96,33 +147,32 @@ export default function POSScreen() {
       return;
     }
 
-    // Get current admin user
-    let processedBy: string;
+    let buyerPhoneE164: string;
     try {
-      const user = await getCurrentUser();
-      if (!user) {
-        Alert.alert('Error', 'Unable to identify the user processing the sale. Please log in again.');
-        return;
-      }
-      processedBy = user.id;
-    } catch (error) {
-      Alert.alert('Error', 'Unable to identify the user processing the sale. Please log in again.');
+      buyerPhoneE164 = normalizePhoneE164US(buyerPhone);
+    } catch (e) {
+      Alert.alert(
+        'Invalid phone',
+        e instanceof Error ? e.message : 'Enter a valid mobile number so we can text the digital receipt.'
+      );
       return;
     }
 
     setSubmitting(true);
     try {
-      await recordSale(selectedItem.id, {
+      await completePosSaleWithBuyerReceipt({
+        itemId: selectedItem.id,
         soldPrice: price,
         buyerName: buyerName.trim(),
         buyerEmail: buyerEmail.trim() || undefined,
-        buyerPhone: buyerPhone.trim() || undefined,
-        processedBy,
+        buyerPhone: buyerPhoneE164,
       });
 
       Alert.alert(
-        'Sale Recorded',
-        `Item ${selectedItem.itemNumber} has been marked as sold for $${price.toFixed(2)}.`,
+        'Sale recorded',
+        `Item ${selectedItem.itemNumber} is marked sold for $${price.toFixed(
+          2
+        )}. The buyer should receive a text receipt momentarily; the sale only completes after our provider accepts that message. The receipt includes a QR exit staff can scan to see check-in photos.`,
         [
           {
             text: 'OK',
@@ -144,7 +194,105 @@ export default function POSScreen() {
     }
   };
 
+  const resetQrHandoff = () => {
+    setQrModalVisible(false);
+    setQrIntentUrl(null);
+    setQrIntentToken(null);
+  };
+
+  const handleShowReceiptQr = async () => {
+    if (!selectedItem) return;
+    if (!buyerName.trim()) {
+      Alert.alert('Error', 'Please enter the buyer\'s name');
+      return;
+    }
+    const price = parseFloat(salePrice);
+    if (!price || price <= 0) {
+      Alert.alert('Error', 'Please enter a valid sale price');
+      return;
+    }
+
+    let optionalPhone: string | undefined;
+    if (buyerPhone.trim()) {
+      try {
+        optionalPhone = normalizePhoneE164US(buyerPhone);
+      } catch (e) {
+        Alert.alert(
+          'Invalid phone',
+          e instanceof Error ? e.message : 'Clear the phone field or enter a valid number.'
+        );
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      const { intentPublicUrl, intentToken } = await createPosReceiptIntent({
+        itemId: selectedItem.id,
+        soldPrice: price,
+        buyerName: buyerName.trim(),
+        buyerEmail: buyerEmail.trim() || undefined,
+        buyerPhone: optionalPhone,
+      });
+      setQrIntentUrl(intentPublicUrl);
+      setQrIntentToken(intentToken);
+      setQrModalVisible(true);
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Could not create receipt QR');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCompleteQrHandoff = async () => {
+    if (!qrIntentToken) return;
+    setSubmitting(true);
+    try {
+      await completePosReceiptIntent(qrIntentToken);
+      resetQrHandoff();
+      Alert.alert(
+        'Sale recorded',
+        `Item ${selectedItem?.itemNumber ?? ''} is marked sold. The buyer should have a photo of the receipt QR or the preview page.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              resetQrHandoff();
+              setSelectedItem(null);
+              setBuyerName('');
+              setBuyerEmail('');
+              setBuyerPhone('');
+              setSalePrice('');
+              setQrCodeInput('');
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Could not complete sale');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCancelQrHandoff = async () => {
+    if (!qrIntentToken) {
+      resetQrHandoff();
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await cancelPosReceiptIntent(qrIntentToken);
+      resetQrHandoff();
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Could not cancel');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleClear = () => {
+    resetQrHandoff();
     setSelectedItem(null);
     setBuyerName('');
     setBuyerEmail('');
@@ -174,6 +322,7 @@ export default function POSScreen() {
   }
 
   return (
+    <>
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -267,9 +416,65 @@ export default function POSScreen() {
             )}
           </View>
 
+          {selectedItem.checkInPhotoStoragePath ? (
+            <View style={styles.verifyPhotoSection}>
+              <Text style={styles.verifyPhotoTitle}>Check-in photo — verify before sale</Text>
+              <Text style={styles.verifyPhotoHint}>
+                Compare this image to the physical item and tag number {selectedItem.itemNumber} to confirm they
+                match.
+              </Text>
+              {verifyPhotoLoading ? (
+                <ActivityIndicator style={styles.verifyPhotoSpinner} color="#007AFF" />
+              ) : verifyPhotoUrl ? (
+                <Image
+                  source={{ uri: verifyPhotoUrl }}
+                  style={styles.verifyPhoto}
+                  resizeMode="cover"
+                  accessibilityLabel="Item as photographed at check-in"
+                />
+              ) : (
+                <Text style={styles.verifyPhotoError}>Could not load check-in photo. Pull Clear and scan again.</Text>
+              )}
+            </View>
+          ) : (
+            <View style={styles.verifyPhotoSectionMuted}>
+              <Text style={styles.verifyPhotoMutedText}>
+                No check-in photo on file for this item. If your team captures photos at check-in, they will appear here
+                for an extra verification step.
+              </Text>
+            </View>
+          )}
+
           <View style={styles.buyerSection}>
             <Text style={styles.sectionTitle}>Buyer Information</Text>
-            
+
+            <Text style={styles.subsectionLabel}>Receipt</Text>
+            <View style={styles.modeToggle}>
+              <TouchableOpacity
+                style={[styles.modePill, receiptMode === 'sms' && styles.modePillActive]}
+                onPress={() => {
+                  setReceiptMode('sms');
+                  resetQrHandoff();
+                }}
+              >
+                <Text style={[styles.modePillText, receiptMode === 'sms' && styles.modePillTextActive]}>Text receipt</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modePill, receiptMode === 'qr' && styles.modePillActive]}
+                onPress={() => {
+                  setReceiptMode('qr');
+                  resetQrHandoff();
+                }}
+              >
+                <Text style={[styles.modePillText, receiptMode === 'qr' && styles.modePillTextActive]}>QR handoff</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modeHint}>
+              {receiptMode === 'sms'
+                ? 'We text a receipt link before marking sold (carrier must accept the SMS).'
+                : 'Show a QR the buyer can photograph. You confirm when they have it — nothing is sold until you tap “Receipt received”.'}
+            </Text>
+
             <View style={styles.field}>
               <Text style={styles.label}>
                 Buyer Name <Text style={styles.required}>*</Text>
@@ -297,7 +502,10 @@ export default function POSScreen() {
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>Phone (Optional)</Text>
+              <Text style={styles.label}>
+                Buyer mobile{' '}
+                {receiptMode === 'sms' ? <Text style={styles.required}>*</Text> : <Text style={styles.optionalMark}>(optional)</Text>}
+              </Text>
               <TextInput
                 style={styles.textInput}
                 value={buyerPhone}
@@ -305,6 +513,11 @@ export default function POSScreen() {
                 placeholder="(555) 123-4567"
                 keyboardType="phone-pad"
               />
+              <Text style={styles.helpText}>
+                {receiptMode === 'sms'
+                  ? 'Required for text receipt: we send the SMS first; the sale completes only after the carrier accepts it. Receipt includes photos and QRs for exit.'
+                  : 'Optional for QR handoff. Leave blank if the buyer only needs the QR or preview page.'}
+              </Text>
             </View>
 
             <View style={styles.field}>
@@ -332,22 +545,67 @@ export default function POSScreen() {
             >
               <Text style={styles.cancelButtonText}>Clear</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.button, styles.submitButton, submitting && styles.submitButtonDisabled]}
-              onPress={handleRecordSale}
-              disabled={submitting || !buyerName.trim() || !salePrice}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.submitButtonText}>Record Sale</Text>
-              )}
-            </TouchableOpacity>
+
+            {receiptMode === 'sms' ? (
+              <TouchableOpacity
+                style={[styles.button, styles.submitButton, submitting && styles.submitButtonDisabled]}
+                onPress={handleRecordSale}
+                disabled={submitting || !buyerName.trim() || !salePrice || !buyerPhone.trim()}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.submitButtonText}>Record sale (text receipt)</Text>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.button, styles.submitButton, submitting && styles.submitButtonDisabled]}
+                onPress={handleShowReceiptQr}
+                disabled={submitting || !buyerName.trim() || !salePrice}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.submitButtonText}>Show receipt QR</Text>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
     </View>
       )}
     </ScrollView>
+      <Modal visible={qrModalVisible} animationType="fade" transparent onRequestClose={handleCancelQrHandoff}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Buyer receipt QR</Text>
+            <Text style={styles.modalHint}>
+              Ask the buyer to photograph this QR (or open the link on their phone). When they have it, tap{' '}
+              <Text style={styles.modalHintBold}>Receipt received</Text> to mark the item sold.
+            </Text>
+            {qrIntentUrl ? (
+              <View style={styles.modalQrWrap}>
+                <QRCode value={qrIntentUrl} size={220} />
+              </View>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.button, styles.submitButton, submitting && styles.submitButtonDisabled]}
+              onPress={handleCompleteQrHandoff}
+              disabled={submitting || !qrIntentToken}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.submitButtonText}>Receipt received — complete sale</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.button, styles.modalSecondary]} onPress={handleCancelQrHandoff} disabled={submitting}>
+              <Text style={styles.modalSecondaryText}>Cancel handoff</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -509,6 +767,52 @@ const styles = StyleSheet.create({
     color: '#666',
     marginLeft: 8,
   },
+  verifyPhotoSection: {
+    backgroundColor: '#FFF8E6',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#F5D78E',
+  },
+  verifyPhotoSectionMuted: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+  },
+  verifyPhotoTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 6,
+  },
+  verifyPhotoHint: {
+    fontSize: 13,
+    color: '#555',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  verifyPhotoSpinner: {
+    marginVertical: 20,
+  },
+  verifyPhoto: {
+    width: '100%',
+    height: 220,
+    borderRadius: 8,
+    backgroundColor: '#ECECEC',
+  },
+  verifyPhotoError: {
+    fontSize: 14,
+    color: '#856404',
+  },
+  verifyPhotoMutedText: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
+  },
   buyerSection: {
     marginBottom: 24,
   },
@@ -523,6 +827,93 @@ const styles = StyleSheet.create({
   },
   required: {
     color: '#DC3545',
+  },
+  optionalMark: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+  },
+  subsectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: 8,
+  },
+  modeToggle: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 8,
+  },
+  modePill: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#E8E8E8',
+    alignItems: 'center',
+  },
+  modePillActive: {
+    backgroundColor: '#007AFF',
+  },
+  modePillText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#555',
+  },
+  modePillTextActive: {
+    color: '#FFFFFF',
+  },
+  modeHint: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 20,
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 10,
+    color: '#1A1A1A',
+  },
+  modalHint: {
+    fontSize: 14,
+    color: '#555',
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  modalHintBold: {
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  modalQrWrap: {
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingVertical: 8,
+  },
+  modalSecondary: {
+    marginTop: 10,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#CCC',
+  },
+  modalSecondaryText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#555',
   },
   textInput: {
     backgroundColor: '#FFFFFF',

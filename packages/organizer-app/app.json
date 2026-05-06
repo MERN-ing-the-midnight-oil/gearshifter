@@ -14,7 +14,8 @@
       "bundleIdentifier": "com.gearswap.organizer",
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "This app needs Bluetooth access to connect to thermal printers for printing item tags.",
-        "NSBluetoothPeripheralUsageDescription": "This app needs Bluetooth access to connect to thermal printers for printing item tags."
+        "NSBluetoothPeripheralUsageDescription": "This app needs Bluetooth access to connect to thermal printers for printing item tags.",
+        "NSCameraUsageDescription": "Take an optional photo of the item at check-in so staff can compare it to the physical item at sale time."
       }
     },
     "android": {
@@ -28,7 +29,8 @@
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.BLUETOOTH_SCAN",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA"
       ]
     },
     "web": {
@@ -36,7 +38,13 @@
     },
     "scheme": "organizer",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow Gear Swap Organizer to take an optional check-in photo of items (compare at sale)."
+        }
+      ]
     ],
     "extra": {
       "router": {

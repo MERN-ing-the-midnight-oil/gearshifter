@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Switch,
+  Modal,
 } from 'react-native';
 import {
   useEvent,
@@ -17,17 +18,50 @@ import {
   getCurrentSeller,
   updateItem,
   getEventFieldDefinitions,
+  getItemFieldDefinitionsForCategory,
   getEventItemCategoryTree,
-  getSellerSwapRegistration,
-  filterItemCategoriesBySellerPlan,
-  PLANNED_ITEM_CATEGORY_IDS_KEY,
+  getCategory,
+  flattenItemCategoriesForPicker,
+  resolveGearTagTemplateForCategory,
+  getDefaultGearTagTemplate,
   isUuidString,
+  resolveTagFieldDataType,
+  tagFieldDropdownOptions,
   type ItemFieldDefinition,
   type ItemCategory,
   type Item,
+  type GearTagTemplate,
+  type TagField,
 } from 'shared';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { setSellerDashboardEventId } from '../../../lib/sellerDashboardEventStorage';
+
+type TagFieldMeta = { name: string; label: string; defaultLabel?: string };
+
+function skipStandaloneTagField(fieldKey: string): boolean {
+  return (
+    fieldKey === 'original_price' ||
+    fieldKey === 'category' ||
+    fieldKey === 'category_id' ||
+    fieldKey === 'item_number'
+  );
+}
+
+/** Built-in tag field keys (aligned with organizer gear tag editor). */
+const GEAR_TAG_BUILTIN_META: TagFieldMeta[] = [
+  { name: 'item_number', label: 'Item Number', defaultLabel: 'Item #' },
+  { name: 'category', label: 'Category' },
+  { name: 'description', label: 'Description' },
+  { name: 'size', label: 'Size' },
+  { name: 'original_price', label: 'Original Price', defaultLabel: 'Price' },
+  { name: 'reduced_price', label: 'Reduced Price' },
+  { name: 'price_reduction_time', label: 'Price Reduction Time', defaultLabel: 'Reduces At' },
+  { name: 'price_reduction_times', label: 'Price Reduction Schedule', defaultLabel: 'Price Schedule' },
+  { name: 'current_price', label: 'Current Price', defaultLabel: 'Current' },
+  { name: 'seller_name', label: 'Seller Name' },
+  { name: 'donate_if_unsold', label: 'Donate if Unsold' },
+];
 
 export default function AddItemScreen() {
   const params = useLocalSearchParams<{ id: string; itemId?: string }>();
@@ -39,7 +73,6 @@ export default function AddItemScreen() {
   const router = useRouter();
 
   const [fieldDefinitions, setFieldDefinitions] = useState<ItemFieldDefinition[]>([]);
-  const [categories, setCategories] = useState<ItemCategory[]>([]);
   const [loadingFields, setLoadingFields] = useState(true);
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [sellerListingName, setSellerListingName] = useState('');
@@ -47,26 +80,68 @@ export default function AddItemScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [loadingItem, setLoadingItem] = useState(false);
+  const [gearTemplate, setGearTemplate] = useState<GearTagTemplate | null>(null);
+  const [itemTypesTree, setItemTypesTree] = useState<ItemCategory[]>([]);
+  const [loadingItemTypes, setLoadingItemTypes] = useState(true);
+  const [itemTypeId, setItemTypeId] = useState<string | null>(null);
+  const [itemTypeMenuVisible, setItemTypeMenuVisible] = useState(false);
   const prefillAppliedRef = useRef(false);
+
+  const itemTypeOptions = useMemo(() => flattenItemCategoriesForPicker(itemTypesTree), [itemTypesTree]);
+
+  const effectiveItemTypeId = useMemo(
+    () => (itemIdParam ? editingItem?.categoryId ?? undefined : itemTypeId ?? undefined),
+    [itemIdParam, editingItem?.categoryId, itemTypeId]
+  );
+
+  const selectedItemTypeLabel = useMemo(() => {
+    if (!effectiveItemTypeId) return '';
+    return itemTypeOptions.find((o) => o.id === effectiveItemTypeId)?.label ?? '';
+  }, [effectiveItemTypeId, itemTypeOptions]);
+
+  const availableTagFieldMeta: TagFieldMeta[] = useMemo(() => {
+    const out: TagFieldMeta[] = [...GEAR_TAG_BUILTIN_META];
+    const seen = new Set(out.map((x) => x.name));
+    fieldDefinitions.forEach((f) => {
+      if (!seen.has(f.name)) {
+        seen.add(f.name);
+        out.push({ name: f.name, label: f.label });
+      }
+    });
+    return out;
+  }, [fieldDefinitions]);
 
   useEffect(() => {
     prefillAppliedRef.current = false;
   }, [itemIdParam]);
 
   useEffect(() => {
-    if (!id) {
-      setLoadingFields(false);
+    if (!event?.id || !user?.id) {
+      setLoadingItemTypes(false);
       return;
     }
-    if (!event) {
-      if (!eventLoading) {
-        setLoadingFields(false);
+    let cancelled = false;
+    (async () => {
+      setLoadingItemTypes(true);
+      try {
+        const tree = await getEventItemCategoryTree(event.id);
+        if (!cancelled) setItemTypesTree(tree);
+      } catch (err) {
+        console.error('Failed to load item types:', err);
+        if (!cancelled) setItemTypesTree([]);
+      } finally {
+        if (!cancelled) setLoadingItemTypes(false);
       }
-      return;
-    }
-    loadFieldDefinitions();
-    loadCategories();
-  }, [id, event, eventLoading, user?.id]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, user?.id]);
+
+  useEffect(() => {
+    if (itemIdParam || itemTypeOptions.length !== 1 || itemTypeId) return;
+    setItemTypeId(itemTypeOptions[0].id);
+  }, [itemIdParam, itemTypeOptions, itemTypeId]);
 
   useEffect(() => {
     if (!itemIdParam) {
@@ -150,59 +225,142 @@ export default function AddItemScreen() {
     });
   }, [editingItem, fieldDefinitions]);
 
-  const loadFieldDefinitions = async () => {
-    if (!event) return;
-    
-    setLoadingFields(true);
-    try {
-      const fields = await getEventFieldDefinitions(event.id);
-      setFieldDefinitions(fields.sort((a, b) => a.displayOrder - b.displayOrder));
-      
-      // Initialize form data with default values
-      const initialData: Record<string, unknown> = {};
-      fields.forEach((field) => {
-        if (field.defaultValue) {
-          initialData[field.name] = field.defaultValue;
-        } else if (field.fieldType === 'boolean') {
-          initialData[field.name] = false;
-        } else if (field.fieldType === 'number' || field.fieldType === 'decimal') {
-          initialData[field.name] = '';
-        } else {
-          initialData[field.name] = '';
-        }
-      });
-      setFormData(initialData);
-    } catch (error) {
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to load form fields');
-    } finally {
-      setLoadingFields(false);
-    }
-  };
+  useEffect(() => {
+    if (!event?.id) return;
+    if (itemIdParam && !editingItem) return;
 
-  const loadCategories = async () => {
-    if (!event) return;
+    let cancelled = false;
 
-    try {
-      let tree = await getEventItemCategoryTree(event.id);
-      if (user?.id) {
-        const seller = await getCurrentSeller(user.id);
-        if (seller) {
-          const reg = await getSellerSwapRegistration(seller.id, event.id);
-          const raw = reg?.registrationData?.[PLANNED_ITEM_CATEGORY_IDS_KEY];
-          if (Array.isArray(raw) && raw.length > 0) {
-            const planned = new Set(raw.filter((x): x is string => typeof x === 'string'));
-            tree = filterItemCategoriesBySellerPlan(tree, planned);
+    const run = async () => {
+      const cid = itemIdParam ? editingItem?.categoryId : itemTypeId ?? undefined;
+
+      if (!cid) {
+        if (!itemIdParam) {
+          if (!cancelled) {
+            setFieldDefinitions([]);
+            setLoadingFields(false);
+          }
+        } else if (editingItem && !editingItem.categoryId) {
+          setLoadingFields(true);
+          try {
+            const orgFields = await getEventFieldDefinitions(event.id);
+            const fields = orgFields
+              .filter((f) => !f.categoryId)
+              .sort((a, b) => a.displayOrder - b.displayOrder);
+            if (!cancelled) setFieldDefinitions(fields);
+          } catch (error) {
+            if (!cancelled) {
+              Alert.alert('Error', error instanceof Error ? error.message : 'Failed to load form fields');
+            }
+          } finally {
+            if (!cancelled) setLoadingFields(false);
           }
         }
+        return;
       }
-      setCategories(tree);
-    } catch (error) {
-      console.error('Failed to load categories:', error);
+
+      setLoadingFields(true);
+      try {
+        const orgFields = await getEventFieldDefinitions(event.id);
+        const scoped = orgFields.filter((f) => !f.categoryId || f.categoryId === cid);
+        const catFields = await getItemFieldDefinitionsForCategory(cid);
+        if (cancelled) return;
+        const byName = new Map<string, ItemFieldDefinition>();
+        scoped.forEach((f) => byName.set(f.name, f));
+        catFields.forEach((f) => byName.set(f.name, f));
+        const merged = [...byName.values()].sort((a, b) => a.displayOrder - b.displayOrder);
+        setFieldDefinitions(merged);
+
+        if (!itemIdParam) {
+          const initialData: Record<string, unknown> = {};
+          merged.forEach((field) => {
+            if (field.defaultValue) {
+              initialData[field.name] = field.defaultValue;
+            } else if (field.fieldType === 'boolean') {
+              initialData[field.name] = false;
+            } else if (field.fieldType === 'number' || field.fieldType === 'decimal') {
+              initialData[field.name] = '';
+            } else {
+              initialData[field.name] = '';
+            }
+          });
+          setFormData(initialData);
+          setSellerPrice('');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          Alert.alert('Error', error instanceof Error ? error.message : 'Failed to load form fields');
+        }
+      } finally {
+        if (!cancelled) setLoadingFields(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, itemIdParam, editingItem, itemTypeId]);
+
+  useEffect(() => {
+    if (!event?.organizationId) {
+      setGearTemplate(null);
+      return;
     }
-  };
+    const cid = itemIdParam ? editingItem?.categoryId : itemTypeId ?? undefined;
+    if (!cid) {
+      setGearTemplate(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        let tpl = await resolveGearTagTemplateForCategory(event.organizationId, cid);
+        if (!tpl) tpl = await getDefaultGearTagTemplate(event.organizationId);
+        if (!cancelled) setGearTemplate(tpl);
+      } catch {
+        if (!cancelled) setGearTemplate(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.organizationId, itemIdParam, editingItem?.categoryId, itemTypeId]);
+
+  /** Seed form keys for tag-template-only fields (not in category/org field definitions). */
+  useEffect(() => {
+    if (!gearTemplate?.tagFields?.length || fieldDefinitions.length === 0) return;
+    setFormData((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const tf of gearTemplate.tagFields ?? []) {
+        if (skipStandaloneTagField(tf.field)) continue;
+        if (fieldDefinitions.some((fd) => fd.name === tf.field)) continue;
+        if (Object.prototype.hasOwnProperty.call(next, tf.field)) continue;
+        const dt = resolveTagFieldDataType(tf);
+        next[tf.field] = dt === 'boolean' ? false : '';
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [gearTemplate, fieldDefinitions]);
 
   const handleSubmit = async () => {
     if (!user || !event) return;
+
+    if (!itemIdParam) {
+      if (itemTypeOptions.length === 0) {
+        Alert.alert(
+          'No item types',
+          'This event does not have any item types available yet. Ask the organizer to configure item types under Manage Event.'
+        );
+        return;
+      }
+      if (!itemTypeId) {
+        Alert.alert('Item type required', 'Choose the item type that matches what you are selling.');
+        return;
+      }
+    }
 
     const basePrice = parseFloat(String(sellerPrice || '').replace(/,/g, ''));
 
@@ -245,20 +403,36 @@ export default function AddItemScreen() {
       }
     }
 
+    const tplReq = gearTemplate?.requiredFields ?? [];
+    for (const reqName of tplReq) {
+      if (skipStandaloneTagField(reqName)) continue;
+      const tagTf = gearTemplate?.tagFields?.find((t) => t.field === reqName);
+      const tagDt = tagTf ? resolveTagFieldDataType(tagTf) : undefined;
+      const v = formData[reqName];
+      if (tagDt === 'boolean') {
+        if (typeof v !== 'boolean') {
+          Alert.alert(
+            'Error',
+            `Please choose yes or no for ${tagTf?.label || fieldDefinitions.find((f) => f.name === reqName)?.label || reqName}`
+          );
+          return;
+        }
+        continue;
+      }
+      if (v === undefined || v === null || v === '') {
+        Alert.alert(
+          'Error',
+          `Please fill in ${tagTf?.label || fieldDefinitions.find((f) => f.name === reqName)?.label || reqName}`
+        );
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       // Build custom fields object (exclude special fields that go to legacy columns)
       const customFields: Record<string, unknown> = {};
       const legacyData: any = {};
-
-      const flattenCategories = (cats: ItemCategory[]): ItemCategory[] => {
-        const result: ItemCategory[] = [];
-        cats.forEach((cat) => {
-          result.push(cat);
-          if (cat.children) result.push(...flattenCategories(cat.children));
-        });
-        return result;
-      };
 
       fieldDefinitions.forEach((field) => {
         const value = formData[field.name];
@@ -312,11 +486,30 @@ export default function AddItemScreen() {
         }
       });
 
+      if (gearTemplate?.tagFields) {
+        for (const tf of gearTemplate.tagFields) {
+          if (skipStandaloneTagField(tf.field)) continue;
+          if (fieldDefinitions.some((fd) => fd.name === tf.field)) continue;
+          const tfVal = formData[tf.field];
+          if (tfVal !== undefined) {
+            customFields[tf.field] = tfVal;
+          }
+        }
+      }
+
       legacyData.originalPrice = basePrice;
 
+      if (!editingItem && itemTypeId) {
+        legacyData.categoryId = itemTypeId;
+      }
+
       if (legacyData.categoryId && !legacyData.category) {
-        const match = flattenCategories(categories).find((c) => c.id === legacyData.categoryId);
-        if (match) legacyData.category = match.name;
+        try {
+          const match = await getCategory(String(legacyData.categoryId));
+          if (match) legacyData.category = match.name;
+        } catch {
+          // optional display name
+        }
       }
 
       if (editingItem) {
@@ -329,37 +522,19 @@ export default function AddItemScreen() {
           customFields,
           sellerItemLabel: sellerListingName.trim() || null,
         });
-        // Use `/` + query, not `/(tabs)/index`: on web the public path is `/` (groups/index are stripped); `/(tabs)/index` is an unmatched URL.
-        router.replace(`/?eventId=${encodeURIComponent(event.id)}`);
+        await setSellerDashboardEventId(event.id);
+        router.replace({ pathname: '/(tabs)', params: { eventId: event.id } });
         return;
       }
 
-      const createdItem = await createItem(user.id, event.id, {
+      await createItem(user.id, event.id, {
         ...legacyData,
         customFields,
         sellerItemLabel: sellerListingName.trim() || undefined,
       });
 
-      console.log('[add-item] Item created:', {
-        id: createdItem.id,
-        eventId: createdItem.eventId,
-        sellerId: createdItem.sellerId,
-        itemNumber: createdItem.itemNumber,
-        sellerItemLabel: createdItem.sellerItemLabel,
-        status: createdItem.status,
-        categoryId: createdItem.categoryId,
-        category: createdItem.category,
-        description: createdItem.description,
-        originalPrice: createdItem.originalPrice,
-        reducedPrice: createdItem.reducedPrice,
-        enablePriceReduction: createdItem.enablePriceReduction,
-        donateIfUnsold: createdItem.donateIfUnsold,
-        customFields: createdItem.customFields,
-        qrCode: createdItem.qrCode,
-        createdAt: createdItem.createdAt?.toISOString?.() ?? createdItem.createdAt,
-      });
-
-      router.replace(`/?eventId=${encodeURIComponent(event.id)}`);
+      await setSellerDashboardEventId(event.id);
+      router.replace({ pathname: '/(tabs)', params: { eventId: event.id } });
     } catch (error) {
       console.error('[add-item] submit failed', {
         message: error instanceof Error ? error.message : String(error),
@@ -381,6 +556,116 @@ export default function AddItemScreen() {
       if (!priceSettings.sellerCanSetReduction) {
         // Seller can't set price reductions - hide this field
         return null;
+      }
+    }
+
+    const tagSpec = gearTemplate?.tagFields?.find((tf) => tf.field === field.name);
+    if (tagSpec) {
+      const tagDt = resolveTagFieldDataType(tagSpec);
+      const dropdownOpts = tagFieldDropdownOptions(tagSpec);
+
+      if (tagDt === 'dropdown' && dropdownOpts.length > 0) {
+        return (
+          <View key={field.id} style={styles.field}>
+            <Text style={styles.label}>
+              {field.label} {isRequired && <Text style={styles.required}>*</Text>}
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dropdownScroll}>
+              {dropdownOpts.map((option, optIdx) => (
+                <TouchableOpacity
+                  key={`${field.name}-tag-dd-${optIdx}-${option}`}
+                  style={[styles.dropdownOption, value === option && styles.dropdownOptionSelected]}
+                  onPress={() => setFormData({ ...formData, [field.name]: option })}
+                >
+                  <Text
+                    style={[
+                      styles.dropdownOptionText,
+                      value === option && styles.dropdownOptionTextSelected,
+                    ]}
+                  >
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            {field.helpText && <Text style={styles.helpText}>{field.helpText}</Text>}
+          </View>
+        );
+      }
+
+      if (tagDt === 'boolean') {
+        return (
+          <View key={field.id} style={styles.field}>
+            <View style={styles.switchRow}>
+              <View style={styles.switchLabelContainer}>
+                <Text style={styles.label}>
+                  {field.label} {isRequired && <Text style={styles.required}>*</Text>}
+                </Text>
+                {field.helpText && <Text style={styles.helpText}>{field.helpText}</Text>}
+              </View>
+              <Switch
+                value={Boolean(value)}
+                onValueChange={(val) => setFormData({ ...formData, [field.name]: val })}
+              />
+            </View>
+          </View>
+        );
+      }
+
+      if (tagDt === 'number') {
+        return (
+          <View key={field.id} style={styles.field}>
+            <Text style={styles.label}>
+              {field.label} {isRequired && <Text style={styles.required}>*</Text>}
+            </Text>
+            <TextInput
+              style={styles.textInput}
+              value={value === undefined || value === null ? '' : String(value)}
+              onChangeText={(text) => {
+                if (text.trim() === '') {
+                  setFormData({ ...formData, [field.name]: '' });
+                } else {
+                  const n = parseFloat(text.replace(/,/g, ''));
+                  setFormData({
+                    ...formData,
+                    [field.name]: Number.isFinite(n) ? n : text,
+                  });
+                }
+              }}
+              placeholder={field.placeholder || field.label}
+              keyboardType="decimal-pad"
+            />
+            {field.helpText && <Text style={styles.helpText}>{field.helpText}</Text>}
+          </View>
+        );
+      }
+
+      if (tagDt === 'integer') {
+        return (
+          <View key={field.id} style={styles.field}>
+            <Text style={styles.label}>
+              {field.label} {isRequired && <Text style={styles.required}>*</Text>}
+            </Text>
+            <TextInput
+              style={styles.textInput}
+              value={value === undefined || value === null ? '' : String(value)}
+              onChangeText={(text) => {
+                if (text.trim() === '') {
+                  setFormData({ ...formData, [field.name]: '' });
+                } else {
+                  const n = parseInt(text.replace(/[^\d-]/g, ''), 10);
+                  setFormData({
+                    ...formData,
+                    [field.name]: Number.isFinite(n) ? n : '',
+                  });
+                }
+              }}
+              placeholder={field.placeholder || field.label}
+              keyboardType="number-pad"
+            />
+            {field.helpText && <Text style={styles.helpText}>{field.helpText}</Text>}
+          </View>
+        );
       }
     }
 
@@ -586,59 +871,152 @@ export default function AddItemScreen() {
     }
   };
 
-  const renderCategoryField = () => {
-    const categoryField = fieldDefinitions.find((f) => f.name === 'category' || f.name === 'category_id');
-    if (!categoryField || categories.length === 0) return null;
+  /** Extra inputs for fields that exist on the gear tag template but not in org/category definitions. */
+  const renderSupplementaryTagField = (tf: TagField) => {
+    if (skipStandaloneTagField(tf.field)) return null;
+    if (fieldDefinitions.some((fd) => fd.name === tf.field)) return null;
 
-    const value = formData[categoryField.name];
-    const isRequired = categoryField.isRequired;
+    const value = formData[tf.field];
+    const label =
+      tf.label ||
+      availableTagFieldMeta.find((m) => m.name === tf.field)?.defaultLabel ||
+      availableTagFieldMeta.find((m) => m.name === tf.field)?.label ||
+      tf.field;
+    const isRequired = gearTemplate?.requiredFields?.includes(tf.field) ?? false;
+    const tagDt = resolveTagFieldDataType(tf);
+    const dropdownOpts = tagFieldDropdownOptions(tf);
+    const key = `tag-sup-${tf.field}`;
 
-    // Flatten categories for display
-    const flattenCategories = (cats: ItemCategory[]): ItemCategory[] => {
-      const result: ItemCategory[] = [];
-      cats.forEach((cat) => {
-        result.push(cat);
-        if (cat.children) {
-          result.push(...flattenCategories(cat.children));
-        }
-      });
-      return result;
-    };
+    if (tagDt === 'dropdown' && dropdownOpts.length > 0) {
+      return (
+        <View key={key} style={styles.field}>
+          <Text style={styles.label}>
+            {label} {isRequired && <Text style={styles.required}>*</Text>}
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dropdownScroll}>
+            {dropdownOpts.map((option, optIdx) => (
+              <TouchableOpacity
+                key={`${tf.field}-sup-dd-${optIdx}-${option}`}
+                style={[styles.dropdownOption, value === option && styles.dropdownOptionSelected]}
+                onPress={() => setFormData({ ...formData, [tf.field]: option })}
+              >
+                <Text
+                  style={[
+                    styles.dropdownOptionText,
+                    value === option && styles.dropdownOptionTextSelected,
+                  ]}
+                >
+                  {option}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      );
+    }
 
-    const flatCategories = flattenCategories(categories);
+    if (tagDt === 'boolean') {
+      return (
+        <View key={key} style={styles.field}>
+          <View style={styles.switchRow}>
+            <View style={styles.switchLabelContainer}>
+              <Text style={styles.label}>
+                {label} {isRequired && <Text style={styles.required}>*</Text>}
+              </Text>
+            </View>
+            <Switch
+              value={Boolean(value)}
+              onValueChange={(val) => setFormData({ ...formData, [tf.field]: val })}
+            />
+          </View>
+        </View>
+      );
+    }
+
+    if (tagDt === 'number') {
+      return (
+        <View key={key} style={styles.field}>
+          <Text style={styles.label}>
+            {label} {isRequired && <Text style={styles.required}>*</Text>}
+          </Text>
+          <TextInput
+            style={styles.textInput}
+            value={value === undefined || value === null ? '' : String(value)}
+            onChangeText={(text) => {
+              if (text.trim() === '') {
+                setFormData({ ...formData, [tf.field]: '' });
+              } else {
+                const n = parseFloat(text.replace(/,/g, ''));
+                setFormData({
+                  ...formData,
+                  [tf.field]: Number.isFinite(n) ? n : text,
+                });
+              }
+            }}
+            keyboardType="decimal-pad"
+            placeholder={label}
+          />
+        </View>
+      );
+    }
+
+    if (tagDt === 'integer') {
+      return (
+        <View key={key} style={styles.field}>
+          <Text style={styles.label}>
+            {label} {isRequired && <Text style={styles.required}>*</Text>}
+          </Text>
+          <TextInput
+            style={styles.textInput}
+            value={value === undefined || value === null ? '' : String(value)}
+            onChangeText={(text) => {
+              if (text.trim() === '') {
+                setFormData({ ...formData, [tf.field]: '' });
+              } else {
+                const n = parseInt(text.replace(/[^\d-]/g, ''), 10);
+                setFormData({
+                  ...formData,
+                  [tf.field]: Number.isFinite(n) ? n : '',
+                });
+              }
+            }}
+            keyboardType="number-pad"
+            placeholder={label}
+          />
+        </View>
+      );
+    }
 
     return (
-      <View key={categoryField.id} style={styles.field}>
+      <View key={key} style={styles.field}>
         <Text style={styles.label}>
-          {categoryField.label} {isRequired && <Text style={styles.required}>*</Text>}
+          {label} {isRequired && <Text style={styles.required}>*</Text>}
         </Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
-          {flatCategories.map((category) => (
-            <TouchableOpacity
-              key={category.id}
-              style={[
-                styles.categoryChip,
-                value === category.id && styles.categoryChipSelected,
-              ]}
-              onPress={() => setFormData({ ...formData, [categoryField.name]: category.id })}
-            >
-              <Text
-                style={[
-                  styles.categoryChipText,
-                  value === category.id && styles.categoryChipTextSelected,
-                ]}
-              >
-                {category.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        {categoryField.helpText && <Text style={styles.helpText}>{categoryField.helpText}</Text>}
+        <TextInput
+          style={styles.textInput}
+          value={String(value ?? '')}
+          onChangeText={(text) => setFormData({ ...formData, [tf.field]: text })}
+          placeholder={label}
+          maxLength={
+            tagDt === 'any'
+              ? undefined
+              : tf.maxLength != null
+                ? Math.min(Math.max(1, tf.maxLength), 5000)
+                : undefined
+          }
+        />
       </View>
     );
   };
 
-  if (eventLoading || loadingFields || (itemIdParam && loadingItem)) {
+  const showTypeSpecificForm = itemIdParam ? !!editingItem : !!itemTypeId;
+
+  if (
+    eventLoading ||
+    (user && loadingItemTypes) ||
+    (itemIdParam && loadingItem) ||
+    (!itemIdParam && user && itemTypeId && loadingFields)
+  ) {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -700,7 +1078,7 @@ export default function AddItemScreen() {
 
       <View style={styles.form}>
         <View style={styles.field}>
-          <Text style={styles.label}>Item name (your dashboard)</Text>
+          <Text style={styles.label}>Item nickname</Text>
           <TextInput
             style={styles.textInput}
             value={sellerListingName}
@@ -708,46 +1086,150 @@ export default function AddItemScreen() {
             placeholder="e.g. Blue Burton snowboard"
           />
           <Text style={styles.helpText}>
-            This name is only for you in the app. It is not printed on the physical tag.
+            This nickname is only for you in the app. It is not printed on the physical tag.
           </Text>
         </View>
-        <View style={styles.field}>
-          <Text style={styles.label}>
-            Your price <Text style={styles.required}>*</Text>
-          </Text>
-          <View style={styles.priceInputContainer}>
-            <Text style={styles.currencySymbol}>$</Text>
-            <TextInput
-              style={styles.priceInput}
-              value={sellerPrice}
-              onChangeText={setSellerPrice}
-              placeholder="0.00"
-              keyboardType="decimal-pad"
-            />
+
+        {editingItem ? (
+          <View style={styles.field}>
+            <Text style={styles.label}>Item type</Text>
+            <View style={styles.readOnlyInput}>
+              <Text style={styles.readOnlyText}>
+                {selectedItemTypeLabel || editingItem.category?.trim() || '—'}
+              </Text>
+            </View>
+            <Text style={styles.helpText}>Item type cannot be changed after pre-registration.</Text>
           </View>
-          <Text style={styles.helpText}>The price you are asking for this item at the swap.</Text>
-        </View>
+        ) : (
+          <View style={styles.field}>
+            <Text style={styles.label}>
+              Item type <Text style={styles.required}>*</Text>
+            </Text>
+            {itemTypeOptions.length === 0 ? (
+              <Text style={styles.helpText}>
+                No item types are set up for this event. Ask the organizer to choose item types under Manage Event → Item
+                types at this event.
+              </Text>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.selectInputRow}
+                  onPress={() => setItemTypeMenuVisible(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[styles.selectInputText, !itemTypeId && styles.selectInputPlaceholder]}
+                    numberOfLines={2}
+                  >
+                    {itemTypeId ? selectedItemTypeLabel : 'Select item type'}
+                  </Text>
+                  <Text style={styles.selectInputChevron}>▼</Text>
+                </TouchableOpacity>
+                <Text style={styles.helpText}>
+                  This tells the swap which gear tag layout to use when staff print your label at check-in.
+                </Text>
+                <Modal
+                  visible={itemTypeMenuVisible}
+                  animationType="fade"
+                  transparent
+                  onRequestClose={() => setItemTypeMenuVisible(false)}
+                >
+                  <View style={styles.itemTypeModalRoot}>
+                    <TouchableOpacity
+                      style={styles.itemTypeModalBackdrop}
+                      activeOpacity={1}
+                      onPress={() => setItemTypeMenuVisible(false)}
+                    />
+                    <View style={styles.itemTypeModalSheet}>
+                      <Text style={styles.itemTypeModalTitle}>Item type</Text>
+                      <Text style={styles.itemTypeModalSubtitle}>
+                        Choose the category that best matches your item.
+                      </Text>
+                      <ScrollView style={styles.itemTypeModalList} keyboardShouldPersistTaps="handled">
+                        {itemTypeOptions.map((opt) => {
+                          const selected = itemTypeId === opt.id;
+                          return (
+                            <TouchableOpacity
+                              key={opt.id}
+                              style={[styles.itemTypeModalOption, selected && styles.itemTypeModalOptionSelected]}
+                              onPress={() => {
+                                setItemTypeId(opt.id);
+                                setItemTypeMenuVisible(false);
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.itemTypeModalOptionText,
+                                  selected && styles.itemTypeModalOptionTextSelected,
+                                ]}
+                                numberOfLines={3}
+                              >
+                                {opt.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                      <TouchableOpacity
+                        style={styles.itemTypeModalDismiss}
+                        onPress={() => setItemTypeMenuVisible(false)}
+                      >
+                        <Text style={styles.itemTypeModalDismissText}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </Modal>
+              </>
+            )}
+          </View>
+        )}
 
-        {renderCategoryField()}
-        {fieldDefinitions
-          .filter(
-            (f) =>
-              f.name !== 'category' &&
-              f.name !== 'category_id' &&
-              !f.isPriceField
-          )
-          .map((field) => renderField(field))}
+        {showTypeSpecificForm ? (
+          <>
+            <View style={styles.field}>
+              <Text style={styles.label}>
+                Your price <Text style={styles.required}>*</Text>
+              </Text>
+              <View style={styles.priceInputContainer}>
+                <Text style={styles.currencySymbol}>$</Text>
+                <TextInput
+                  style={styles.priceInput}
+                  value={sellerPrice}
+                  onChangeText={setSellerPrice}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                />
+              </View>
+              <Text style={styles.helpText}>The price you are asking for this item at the swap.</Text>
+            </View>
 
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            💡 This pre-registers your item; staff will confirm it at check-in. Make sure all information is accurate.
-          </Text>
-        </View>
+            {fieldDefinitions
+              .filter(
+                (f) =>
+                  f.name !== 'category' &&
+                  f.name !== 'category_id' &&
+                  !f.isPriceField
+              )
+              .map((field) => renderField(field))}
+
+            {gearTemplate?.tagFields?.map((tf) => renderSupplementaryTagField(tf))}
+
+            <View style={styles.infoBox}>
+              <Text style={styles.infoText}>
+                💡 This pre-registers your item; staff will confirm it at check-in. Make sure all information is accurate.
+              </Text>
+            </View>
+          </>
+        ) : null}
 
         <TouchableOpacity
-          style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
+          style={[
+            styles.submitButton,
+            (submitting || (!itemIdParam && (!itemTypeId || itemTypeOptions.length === 0))) &&
+              styles.submitButtonDisabled,
+          ]}
           onPress={handleSubmit}
-          disabled={submitting}
+          disabled={submitting || (!itemIdParam && (!itemTypeId || itemTypeOptions.length === 0))}
         >
           {submitting ? (
             <ActivityIndicator color="#FFFFFF" />
@@ -853,30 +1335,6 @@ const styles = StyleSheet.create({
   switchLabelContainer: {
     flex: 1,
     marginRight: 12,
-  },
-  categoryScroll: {
-    marginHorizontal: -4,
-  },
-  categoryChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E5E5',
-    marginRight: 8,
-  },
-  categoryChipSelected: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  categoryChipText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  categoryChipTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '600',
   },
   dropdownScroll: {
     marginHorizontal: -4,
@@ -996,5 +1454,94 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     fontStyle: 'italic',
+  },
+  selectInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    minHeight: 48,
+  },
+  selectInputText: {
+    flex: 1,
+    fontSize: 16,
+    color: '#1A1A1A',
+    paddingRight: 8,
+  },
+  selectInputPlaceholder: {
+    color: '#999',
+  },
+  selectInputChevron: {
+    fontSize: 12,
+    color: '#666',
+  },
+  itemTypeModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  itemTypeModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  itemTypeModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    maxHeight: '72%',
+    paddingBottom: 8,
+    zIndex: 1,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  itemTypeModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  itemTypeModalSubtitle: {
+    fontSize: 13,
+    color: '#666',
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 8,
+  },
+  itemTypeModalList: {
+    maxHeight: 360,
+  },
+  itemTypeModalOption: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E5E5',
+  },
+  itemTypeModalOptionSelected: {
+    backgroundColor: '#E3F2FD',
+  },
+  itemTypeModalOptionText: {
+    fontSize: 16,
+    color: '#1A1A1A',
+  },
+  itemTypeModalOptionTextSelected: {
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  itemTypeModalDismiss: {
+    marginTop: 4,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  itemTypeModalDismissText: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: '600',
   },
 });

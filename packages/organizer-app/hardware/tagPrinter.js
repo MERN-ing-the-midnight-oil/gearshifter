@@ -10,12 +10,13 @@ const printer_1 = require("./printer");
  * Print a tag for an item with QR code
  * This is the main function to use when printing tags
  */
-async function printItemTag(item, tagTemplate) {
+async function printItemTag(item, tagTemplate, event) {
     // Generate QR code data for the item
     const qrCodeData = (0, shared_1.generateItemQRCode)(item, tagTemplate);
     const printOptions = {
         item,
         tagTemplate,
+        event,
         qrCodeData,
         includeQRCode: true,
     };
@@ -24,13 +25,13 @@ async function printItemTag(item, tagTemplate) {
 /**
  * Print multiple tags in batch
  */
-async function printItemTags(items, tagTemplate) {
+async function printItemTags(items, tagTemplate, event) {
     let success = 0;
     let failed = 0;
     const errors = [];
     for (const item of items) {
         try {
-            const result = await printItemTag(item, tagTemplate);
+            const result = await printItemTag(item, tagTemplate, event);
             if (result) {
                 success++;
             }
