@@ -151,6 +151,10 @@ class PrinterService {
                     const label = field.label || field.field;
                     const formattedValue = this.formatFieldValue(value, field.format);
                     let fieldText = field.hideLabelOnTag ? formattedValue : `${label}: ${formattedValue}`;
+                    const emojiPrefix = typeof field.tagLineEmoji === 'string' && field.tagLineEmoji.trim()
+                        ? `${field.tagLineEmoji.trim()} `
+                        : '';
+                    fieldText = emojiPrefix + fieldText;
                     // Truncate if maxLength specified
                     const maxLen = field.maxLength ?? 50;
                     if (fieldText.length > maxLen) {
@@ -216,6 +220,10 @@ class PrinterService {
                         qrY = Math.round((template.heightMm - qrSize) / 2 * DOTS_PER_MM);
                         break;
                 }
+                const offX = Math.round(((template.qrCodeOffsetXMm ?? 0)) * DOTS_PER_MM);
+                const offY = Math.round(((template.qrCodeOffsetYMm ?? 0)) * DOTS_PER_MM);
+                qrX += offX;
+                qrY += offY;
                 // Position for QR code
                 const qrNL = qrX & 0xFF;
                 const qrNH = (qrX >> 8) & 0xFF;

@@ -1,5 +1,51 @@
 import { supabase } from './supabase';
-import type { Organization, PriceReductionSettings } from '../types/models';
+import {
+  DEFAULT_SELLER_ITEM_PRE_REGISTRATION_ALLOWED_FIELD_NAMES,
+  type Organization,
+  type PriceReductionSettings,
+  type SaleBehaviorSettings,
+  type SellerItemPreRegistrationSettings,
+} from '../types/models';
+
+const DEFAULT_SELLER_ITEM_PREREG_SETTINGS: SellerItemPreRegistrationSettings = {
+  allowedFieldNames: [...DEFAULT_SELLER_ITEM_PRE_REGISTRATION_ALLOWED_FIELD_NAMES],
+  allowTagTemplateOnlyFields: false,
+};
+
+/** Merge persisted JSON with defaults; omitting `allowedFieldNames` yields the default list (currently description). */
+export function normalizeSellerItemPreRegistration(
+  patch: Partial<SellerItemPreRegistrationSettings> | null | undefined
+): SellerItemPreRegistrationSettings {
+  const defaults = DEFAULT_SELLER_ITEM_PREREG_SETTINGS;
+  const p = patch && typeof patch === 'object' ? patch : {};
+  const hasExplicitAllowed = Object.prototype.hasOwnProperty.call(p, 'allowedFieldNames');
+  const allowTagTemplateOnlyFields = p.allowTagTemplateOnlyFields ?? defaults.allowTagTemplateOnlyFields ?? false;
+
+  const allowedFieldNames = hasExplicitAllowed
+    ? Array.from(
+        new Set((p.allowedFieldNames ?? []).map((name) => name.trim()).filter(Boolean))
+      )
+    : [...defaults.allowedFieldNames];
+
+  return { allowedFieldNames, allowTagTemplateOnlyFields };
+}
+
+const DEFAULT_PRICE_REDUCTION_SETTINGS: PriceReductionSettings = {
+  sellerCanSetReduction: true,
+  sellerCanSetTime: true,
+  priceReductionValueControl: 'seller',
+  priceReductionCountControl: 'seller',
+  priceReductionTimingControl: 'seller',
+  defaultReductionTime: undefined,
+  allowedReductionTimes: [],
+  sellerItemPreRegistration: DEFAULT_SELLER_ITEM_PREREG_SETTINGS,
+};
+
+const DEFAULT_SALE_BEHAVIOR_SETTINGS: SaleBehaviorSettings = {
+  notifySellerSmsOnSale: false,
+  notifySellerPushOnSale: true,
+  defaultSellerReceiptTemplateId: null,
+};
 
 /**
  * Create a new organization
@@ -106,6 +152,11 @@ export const updatePriceReductionSettings = async (
     ...org.priceReductionSettings,
     ...settings,
   };
+  const valueControl = updatedSettings.priceReductionValueControl ?? 'seller';
+  const timingControl = updatedSettings.priceReductionTimingControl ?? 'seller';
+  const countControl = updatedSettings.priceReductionCountControl ?? 'seller';
+  updatedSettings.sellerCanSetReduction = valueControl === 'seller';
+  updatedSettings.sellerCanSetTime = timingControl === 'seller' && countControl === 'seller';
 
   const { data, error } = await supabase
     .from('organizations')
@@ -121,14 +172,94 @@ export const updatePriceReductionSettings = async (
 };
 
 /**
+ * Update org-level seller item pre-registration field access settings.
+ */
+/**
+ * Organization-wide choices for what happens after a sale (seller SMS/push defaults, receipt template ID).
+ */
+export const updateSaleBehaviorSettings = async (
+  organizationId: string,
+  settings: Partial<SaleBehaviorSettings>
+): Promise<Organization> => {
+  const org = await getOrganization(organizationId);
+  if (!org) throw new Error('Organization not found');
+
+  const next: SaleBehaviorSettings = {
+    ...DEFAULT_SALE_BEHAVIOR_SETTINGS,
+    ...org.saleBehaviorSettings,
+    ...settings,
+  };
+
+  const { data, error } = await supabase
+    .from('organizations')
+    .update({ sale_behavior_settings: next })
+    .eq('id', organizationId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return mapOrganizationFromDb(data);
+};
+
+export const updateSellerItemPreRegistrationSettings = async (
+  organizationId: string,
+  settings: Partial<SellerItemPreRegistrationSettings>
+): Promise<Organization> => {
+  const org = await getOrganization(organizationId);
+  if (!org) throw new Error('Organization not found');
+
+  const nextPreRegSettings = normalizeSellerItemPreRegistration({
+    ...(org.priceReductionSettings.sellerItemPreRegistration ?? {}),
+    ...settings,
+  });
+
+  const nextPriceSettings: PriceReductionSettings = {
+    ...org.priceReductionSettings,
+    sellerItemPreRegistration: nextPreRegSettings,
+  };
+
+  const { data, error } = await supabase
+    .from('organizations')
+    .update({
+      price_reduction_settings: nextPriceSettings,
+    })
+    .eq('id', organizationId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return mapOrganizationFromDb(data);
+};
+
+/**
  * Helper to map database organization to Organization model
  */
-function mapOrganizationFromDb(dbOrg: any): Organization {
-  const defaultPriceReductionSettings: PriceReductionSettings = {
-    sellerCanSetReduction: true,
-    sellerCanSetTime: true,
-    defaultReductionTime: undefined,
-    allowedReductionTimes: [],
+export function mapOrganizationFromDb(dbOrg: any): Organization {
+  const rawSaleBehavior =
+    dbOrg.sale_behavior_settings && typeof dbOrg.sale_behavior_settings === 'object'
+      ? (dbOrg.sale_behavior_settings as SaleBehaviorSettings)
+      : {};
+  const saleBehaviorSettings: SaleBehaviorSettings = {
+    ...DEFAULT_SALE_BEHAVIOR_SETTINGS,
+    ...rawSaleBehavior,
+  };
+
+  const raw = (dbOrg.price_reduction_settings as PriceReductionSettings) || DEFAULT_PRICE_REDUCTION_SETTINGS;
+  const valueControl =
+    raw.priceReductionValueControl ?? (raw.sellerCanSetReduction === false ? 'org' : 'seller');
+  const timingControl =
+    raw.priceReductionTimingControl ?? (raw.sellerCanSetTime === false ? 'org' : 'seller');
+  const countControl = raw.priceReductionCountControl ?? 'seller';
+  const sellerItemPreRegistration = normalizeSellerItemPreRegistration(raw.sellerItemPreRegistration);
+  const normalized: PriceReductionSettings = {
+    ...DEFAULT_PRICE_REDUCTION_SETTINGS,
+    ...raw,
+    priceReductionValueControl: valueControl,
+    priceReductionCountControl: countControl,
+    priceReductionTimingControl: timingControl,
+    sellerCanSetReduction: valueControl === 'seller',
+    sellerCanSetTime: timingControl === 'seller' && countControl === 'seller',
+    sellerItemPreRegistration,
   };
 
   return {
@@ -137,7 +268,8 @@ function mapOrganizationFromDb(dbOrg: any): Organization {
     slug: dbOrg.slug,
     commissionRate: dbOrg.commission_rate != null ? parseFloat(dbOrg.commission_rate) : null,
     vendorCommissionRate: dbOrg.vendor_commission_rate != null ? parseFloat(dbOrg.vendor_commission_rate) : null,
-    priceReductionSettings: (dbOrg.price_reduction_settings as PriceReductionSettings) || defaultPriceReductionSettings,
+    priceReductionSettings: normalized,
+    saleBehaviorSettings,
     createdAt: new Date(dbOrg.created_at),
   };
 }

@@ -13,6 +13,9 @@ import {
   useEvent,
   getSellerById,
   getSellerItemsByEvent,
+  STAFF_MOBILE_EDGE_PADDING,
+  STAFF_MOBILE_HEADER_PADDING_TOP,
+  STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   type Seller,
   type Item,
 } from 'shared';
@@ -68,8 +71,8 @@ export default function ReviewItemsScreen() {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Seller or event not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Go Back</Text>
+        <TouchableOpacity style={styles.errorScreenButton} onPress={() => router.back()}>
+          <Text style={styles.errorScreenButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -165,15 +168,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   loadingText: {
     marginTop: 10,
     color: '#666',
   },
   header: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_HEADER_PADDING_TOP,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
@@ -202,8 +206,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   qrSection: {
-    margin: 20,
-    padding: 16,
+    marginHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    marginTop: STAFF_MOBILE_EDGE_PADDING,
+    marginBottom: STAFF_MOBILE_EDGE_PADDING,
+    padding: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
@@ -226,7 +232,8 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   emptyContainer: {
-    padding: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingVertical: 32,
     alignItems: 'center',
   },
   emptyText: {
@@ -236,7 +243,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   itemsList: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 24,
   },
   itemCard: {
     backgroundColor: '#FFFFFF',
@@ -299,9 +308,13 @@ const styles = StyleSheet.create({
   addItemButton: {
     backgroundColor: '#007AFF',
     borderRadius: 12,
-    padding: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
     marginTop: 12,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   addItemButtonText: {
     color: '#FFFFFF',
@@ -313,5 +326,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#DC3545',
     marginBottom: 20,
+    textAlign: 'center',
+  },
+  errorScreenButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorScreenButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

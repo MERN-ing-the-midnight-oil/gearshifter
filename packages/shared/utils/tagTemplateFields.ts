@@ -199,3 +199,39 @@ export function tagFieldDropdownOptions(tf: Pick<TagField, 'dropdownOptions'>): 
   if (!tf.dropdownOptions?.length) return [];
   return tf.dropdownOptions.map((s) => String(s).trim()).filter(Boolean);
 }
+
+const MAX_TAG_LINE_EMOJI_CHARS = 12;
+
+/** Trim and cap length so pasted strings stay a single visual “sticker” on the tag line. */
+export function sanitizeTagLineEmoji(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const t = raw.trim();
+  if (!t) return undefined;
+  return Array.from(t).slice(0, MAX_TAG_LINE_EMOJI_CHARS).join('');
+}
+
+/** Only allow https URLs for tag line images (avoid javascript:, data:, etc.). */
+export function sanitizeTagLineImageUrl(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const t = raw.trim();
+  if (!t) return undefined;
+  try {
+    const u = new URL(t);
+    if (u.protocol !== 'https:') return undefined;
+    return t;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Clears invalid decoration values before persisting or sending to the API. */
+export function tagFieldWithSanitizedDecorations(tf: TagField): TagField {
+  const emoji = sanitizeTagLineEmoji(tf.tagLineEmoji);
+  const img = sanitizeTagLineImageUrl(tf.tagLineImageUrl);
+  const next: TagField = { ...tf };
+  if (emoji) next.tagLineEmoji = emoji;
+  else delete next.tagLineEmoji;
+  if (img) next.tagLineImageUrl = img;
+  else delete next.tagLineImageUrl;
+  return next;
+}

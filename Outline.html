@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gearshifter — UI outline</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface2: #243044;
+      --text: #e7ecf3;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-dim: #0c4a6e;
+      --border: #334155;
+      --success: #34d399;
+      --radius: 12px;
+      --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header.site {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(15, 20, 25, 0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.25rem;
+    }
+    header.site .inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    header.site h1 {
+      margin: 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    header.site .crumb {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    header.site .crumb strong { color: var(--text); font-weight: 500; }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+    }
+    .view { display: none; animation: fade 0.2s ease; }
+    .view.active { display: block; }
+    @keyframes fade {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: none; }
+    }
+    .lead {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 62ch;
+      margin-bottom: 2rem;
+    }
+    .back {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-bottom: 1.25rem;
+      padding: 0.4rem 0;
+      font-size: 0.9rem;
+      color: var(--muted);
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-family: inherit;
+    }
+    .back:hover { color: var(--accent); }
+    .grid-apps {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .app-card {
+      background: linear-gradient(145deg, var(--surface) 0%, var(--surface2) 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.35rem 1.25rem;
+      cursor: pointer;
+      text-align: left;
+      color: inherit;
+      font-family: inherit;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .app-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+    .app-card h2 {
+      margin: 0 0 0.5rem;
+      font-size: 1.25rem;
+    }
+    .app-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .app-card .path {
+      margin-top: 0.75rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+    }
+    .section-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 0.85rem;
+      margin-top: 1rem;
+    }
+    .section-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+      cursor: pointer;
+      text-align: left;
+      color: inherit;
+      font-family: inherit;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .section-card:hover {
+      background: var(--surface2);
+      border-color: var(--accent-dim);
+    }
+    .section-card h3 {
+      margin: 0 0 0.35rem;
+      font-size: 1rem;
+    }
+    .section-card p {
+      margin: 0;
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .section-card .count {
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--accent);
+      font-weight: 500;
+    }
+    .block-text {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.15rem;
+      margin-bottom: 1.25rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .block-text strong { color: var(--text); }
+    .screen-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+    }
+    .screen {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.15rem 1.25rem;
+    }
+    .screen-title {
+      margin: 0 0 0.35rem;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .screen-meta {
+      margin: 0 0 0.85rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .screen-meta code {
+      color: var(--accent);
+      font-size: inherit;
+    }
+    .screen-body p {
+      margin: 0 0 0.65rem;
+      font-size: 0.92rem;
+      line-height: 1.58;
+      color: var(--text);
+    }
+    .screen-body p:last-child {
+      margin-bottom: 0;
+    }
+    h2.page-title {
+      margin: 0 0 0.5rem;
+      font-size: 1.5rem;
+    }
+    .hint {
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .hint a { font-weight: 500; }
+  </style>
+</head>
+<body>
+  <header class="site">
+    <div class="inner">
+      <h1>Gearshifter — UI outline</h1>
+      <nav class="crumb" id="breadcrumb" aria-live="polite"></nav>
+    </div>
+  </header>
+  <main id="main"></main>
+
+  <template id="tpl-home">
+    <p class="lead">
+      Two Expo apps: <strong>organizer</strong> (staff and admins) and <strong>seller</strong> (consignors). Each card opens a section of screens described in plain English—what you are looking at and what you can actually do there.
+    </p>
+    <div class="grid-apps">
+      <button type="button" class="app-card" data-nav="organizer-menu">
+        <h2>Organizer app</h2>
+        <p>Events, org settings, check-in, POS, pickup, and reports.</p>
+        <div class="path">packages/organizer-app</div>
+      </button>
+      <button type="button" class="app-card" data-nav="seller-menu">
+        <h2>Seller app</h2>
+        <p>Phone sign-in, dashboard, items, notifications, and event links.</p>
+        <div class="path">packages/seller-app</div>
+      </button>
+      <button type="button" class="app-card" data-nav="about">
+        <h2>How this doc fits the code</h2>
+        <p>Where the real rules live when you outgrow the story version.</p>
+        <div class="path">packages/shared</div>
+      </button>
+    </div>
+    <p class="hint">Source: <a href="./Outline.md">Outline.md</a> — open this file in a browser: <code>Outline.html</code></p>
+  </template>
+
+  <template id="tpl-organizer-menu">
+    <button type="button" class="back" data-nav="home">← Home</button>
+    <h2 class="page-title">Organizer app</h2>
+    <p class="lead">Everything below lives under <code style="font-size:0.9em;">packages/organizer-app/app/</code>. Pick a topic to read it in normal language.</p>
+    <div class="section-grid">
+      <button type="button" class="section-card" data-nav="organizer-intro">
+        <h3>Global chrome</h3>
+        <p>Home button, password recovery, and how navigation fits together.</p>
+        <span class="count">Overview</span>
+      </button>
+      <button type="button" class="section-card" data-nav="organizer-auth">
+        <h3>Authentication</h3>
+        <p>Login, signup, test login, forgot and reset password.</p>
+        <span class="count">5 screens</span>
+      </button>
+      <button type="button" class="section-card" data-nav="organizer-dashboard">
+        <h3>Dashboard &amp; org settings</h3>
+        <p>Events list, create event, categories, tags, staff, inventory, and more.</p>
+        <span class="count">10 screens</span>
+      </button>
+      <button type="button" class="section-card" data-nav="organizer-event">
+        <h3>Event hub</h3>
+        <p>Manage a single event and pick a station.</p>
+        <span class="count">2 screens</span>
+      </button>
+      <button type="button" class="section-card" data-nav="organizer-checkin">
+        <h3>Check-in</h3>
+        <p>Scan, register sellers, add items, item details, review list.</p>
+        <span class="count">6 screens</span>
+      </button>
+      <button type="button" class="section-card" data-nav="organizer-pos">
+        <h3>Point of sale</h3>
+        <p>Ring up items with QR, buyer info, receipts.</p>
+        <span class="count">1 screen</span>
+      </button>
+      <button type="button" class="section-card" data-nav="organizer-pickup">
+        <h3>Pickup</h3>
+        <p>Payouts, marking paid, donations, inventory.</p>
+        <span class="count">1 screen</span>
+      </button>
+      <button type="button" class="section-card" data-nav="organizer-reports">
+        <h3>Reports</h3>
+        <p>Stats, exports, declare closed.</p>
+        <span class="count">1 screen</span>
+      </button>
+    </div>
+  </template>
+
+  <template id="tpl-seller-menu">
+    <button type="button" class="back" data-nav="home">← Home</button>
+    <h2 class="page-title">Seller app</h2>
+    <p class="lead">These screens live under <code style="font-size:0.9em;">packages/seller-app/app/</code>. Push notifications set up after you sign in; if you are logged out, almost everything sends you to login except a shared <code>/event/…</code> link.</p>
+    <div class="section-grid">
+      <button type="button" class="section-card" data-nav="seller-intro">
+        <h3>Behavior</h3>
+        <p>Auth routing and deep links at a glance.</p>
+        <span class="count">Overview</span>
+      </button>
+      <button type="button" class="section-card" data-nav="seller-auth">
+        <h3>Auth &amp; onboarding</h3>
+        <p>Phone login, OTP, profile, legacy signup redirect.</p>
+        <span class="count">4 screens</span>
+      </button>
+      <button type="button" class="section-card" data-nav="seller-tabs">
+        <h3>Main tabs</h3>
+        <p>Dashboard, items, notifications, profile.</p>
+        <span class="count">4 screens</span>
+      </button>
+      <button type="button" class="section-card" data-nav="seller-event">
+        <h3>Event routes</h3>
+        <p>Public event page, add item, legacy register URL.</p>
+        <span class="count">3 screens</span>
+      </button>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-intro">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — global chrome</h2>
+    <div class="screen-list">
+      <div class="block-text" style="margin-bottom:0">
+        Once you are signed in, you always have a way to jump back: the <strong>Home</strong> control sends you to the main dashboard. If you tap a password-reset link from email, the app listens for Supabase’s recovery event and drops you on <strong>reset password</strong> so you can pick a new password without getting bounced away by the normal “already logged in” logic.
+      </div>
+      <article class="screen">
+        <h3 class="screen-title">Root entry</h3>
+        <p class="screen-meta"><code>/</code> · <code>app/index.tsx</code></p>
+        <div class="screen-body">
+          <p>You mostly see a brief loading state while the app figures out who you are. There is nothing to tap here on purpose—as soon as auth settles, you are sent either to the dashboard if you already have a session, or to login if you do not.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-auth">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — authentication</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Admin login</h3>
+        <p class="screen-meta"><code>/(auth)/login</code> · <code>(auth)/login.tsx</code></p>
+        <div class="screen-body">
+          <p>This is the standard email-and-password screen for organizer staff—the usual fields, a sign-in button, and links if you need to create an account or forgot your password.</p>
+          <p>In development there are shortcuts to fill a known test admin, and a special query flag can force a sign-out so you can see the form even when a session already exists.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Test login</h3>
+        <p class="screen-meta"><code>/(auth)/test-login</code> · <code>(auth)/test-login.tsx</code></p>
+        <div class="screen-body">
+          <p>Think of this as a labeled side door for a specific demo tenant (Axel / Bellingham). You see explanatory copy about how that account was created.</p>
+          <p>You sign in with the pre-filled credentials—handy for staging and demos, not something everyday volunteers need.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Create organizer account</h3>
+        <p class="screen-meta"><code>/(auth)/signup</code> · <code>(auth)/signup.tsx</code></p>
+        <div class="screen-body">
+          <p>New swap organizations start here. You work through a form that collects your name, email, password, and the organization name and URL slug.</p>
+          <p>When you submit, you are registering both yourself as an admin and the org shell you will run events under.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Forgot password</h3>
+        <p class="screen-meta"><code>/(auth)/forgot-password</code> · <code>(auth)/forgot-password.tsx</code></p>
+        <div class="screen-body">
+          <p>You type the email tied to your organizer account and ask for a reset. The app tells you to check your inbox, then sends you back toward login after you acknowledge.</p>
+          <p>The actual password change happens when you follow the link on a device that opens the reset screen.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Reset password</h3>
+        <p class="screen-meta"><code>/(auth)/reset-password</code> · <code>(auth)/reset-password.tsx</code></p>
+        <div class="screen-body">
+          <p>You land here from the recovery link (or an equivalent recovery session). You see two password fields and a save action.</p>
+          <p>Once the new password sticks, you are nudged back into the signed-in world—usually the dashboard.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-dashboard">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — dashboard &amp; org settings</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Organizer home / events</h3>
+        <p class="screen-meta"><code>/(dashboard)</code> · <code>(dashboard)/index.tsx</code></p>
+        <div class="screen-body">
+          <p>This is the hub after login. You see your organization name, every event you run (with dates and status), and a grid of shortcuts into org-wide settings—categories, gear tags, commission, staff, and so on.</p>
+          <p>For each event you can jump into manage, copy the seller registration link for the web, archive or delete an event (with confirmations), pull to refresh if the list feels stale, or sign out.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Create event</h3>
+        <p class="screen-meta"><code>/(dashboard)/create-event</code> · <code>create-event.tsx</code></p>
+        <div class="screen-body">
+          <p>You walk through a long form: event name, dates, when registration opens and closes, shop hours, drop-off windows and location, status, and related options—with pickers that behave on both web and native.</p>
+          <p>Saving creates the new event so it shows up on the home list.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Categories</h3>
+        <p class="screen-meta"><code>/(dashboard)/categories</code> · <code>categories.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>Volunteers without admin rights are gently redirected away. Admins see every item category the org uses.</p>
+          <p>You open modals to add or edit a category, wire it to a gear tag template, and define the extra attributes sellers must fill in for items in that category—text, numbers, dropdowns, and the rest.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Item fields (org-wide)</h3>
+        <p class="screen-meta"><code>/(dashboard)/field-definitions</code> · <code>field-definitions.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>Same admin gate as categories. Here you shape the custom fields that apply to items across the org.</p>
+          <p>You set labels, field types, which field counts as “price,” which powers automatic price reductions, dropdown choices, and helper text sellers will read later.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Gear tags</h3>
+        <p class="screen-meta"><code>/(dashboard)/gear-tags</code> · <code>gear-tags.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>This is the print-design studio: tag dimensions, which data fields print where, QR placement, orientation, and a live preview so you are not guessing what will come off the printer.</p>
+          <p>You create, duplicate, tweak, and delete tag templates until the physical labels match how your swap runs intake.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Commission rates</h3>
+        <p class="screen-meta"><code>/(dashboard)/commission-rates</code> · <code>commission-rates.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>You see switches and percentage fields for what the org takes from consignment sales—and vendor-specific commission if you use it.</p>
+          <p>Turning a commission off clears it; turning it on expects a sensible percentage before you save.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Price reduction settings</h3>
+        <p class="screen-meta"><code>/(dashboard)/price-reduction-settings</code> · <code>price-reduction-settings.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>This answers “who gets to decide mid-event discounts—the org or the seller?” You choose policies for reduction amounts, how many steps are allowed, timing, and optionally which clock times are valid.</p>
+          <p>Save so the seller app and check-in flows respect those rules.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Seller registration (web)</h3>
+        <p class="screen-meta"><code>/(dashboard)/swap-registration-fields</code> · <code>swap-registration-fields.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>You are designing the public registration experience: which questions appear, required vs optional, suggested presets you can enable in one tap.</p>
+          <p>You also edit the marketing copy around those fields—title, welcome message, and how questions are grouped.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Staff accounts</h3>
+        <p class="screen-meta"><code>/(dashboard)/staff-accounts</code> · <code>staff-accounts.tsx</code></p>
+        <div class="screen-body">
+          <p>People who run the floor appear in a table: org admins vs volunteers, which stations each person may use (check-in, POS, pickup, reports), and fine-grained capabilities for admins.</p>
+          <p>Admins invite new staff, set initial passwords, and adjust access. A URL flag can drop you straight into “create someone new.”</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Post-event inventory</h3>
+        <p class="screen-meta"><code>/(dashboard)/post-event-inventory</code> · <code>post-event-inventory.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>After the swap, sometimes gear lives in a spreadsheet in your head—this screen is the structured version.</p>
+          <p>You see rows you added manually (description, category, size, optional list price), can refresh the list, add another line, or clean up mistakes.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-event">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — event hub</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Manage event</h3>
+        <p class="screen-meta"><code>/(event)/manage</code> · <code>manage.tsx</code></p>
+        <div class="screen-body">
+          <p>Pick one event and you are in its control room: edit dates and status, choose which item types apply to this event, copy or share the seller app invite, peek at who has registered, and hop to stations when the doors open.</p>
+          <p>It is the bridge between planning the swap and running the swap.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Stations</h3>
+        <p class="screen-meta"><code>/(event)/stations</code> · <code>stations.tsx</code></p>
+        <div class="screen-body">
+          <p>You see big friendly tiles for Check-in, POS, Pickup, and Reports—but only the ones your account is allowed to open.</p>
+          <p>Tapping a tile takes you into that workflow for the current event. If nobody gave you station access, you get a clear message instead of dead ends.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-checkin">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — check-in</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Check-in home</h3>
+        <p class="screen-meta"><code>/(event)/check-in</code> · <code>check-in/index.tsx</code></p>
+        <div class="screen-body">
+          <p>Floor staff live here during intake. You can switch between scanning a QR, searching for a seller by name or phone, registering someone new, or—once a seller is selected—seeing all their items for this event.</p>
+          <p>Printing tags in bulk and drilling into a single item both start from here.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Register seller</h3>
+        <p class="screen-meta"><code>…/check-in/register-seller</code> · <code>register-seller.tsx</code></p>
+        <div class="screen-body">
+          <p>A short form for first name, last name, phone, and email—used when someone shows up who is not already in the system.</p>
+          <p>The app tries to match existing sellers by phone so you do not accidentally create duplicates.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Register guest</h3>
+        <p class="screen-meta"><code>…/check-in/register-guest</code> · <code>register-guest.tsx</code></p>
+        <div class="screen-body">
+          <p>For walk-ins without an app history, you confirm you checked photo ID, then capture full contact and mailing address.</p>
+          <p>It is a heavier form on purpose because staff are attesting they verified the person in front of them.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Review items</h3>
+        <p class="screen-meta"><code>…/check-in/review-items</code> · <code>review-items.tsx</code></p>
+        <div class="screen-body">
+          <p>After you have a seller in context, this is the readout of their line items: each row shows number, description, price, and status.</p>
+          <p>You can jump into item details, add another line item, or read off their seller QR for them to keep.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Add item</h3>
+        <p class="screen-meta"><code>…/check-in/add-item</code> · <code>add-item.tsx</code></p>
+        <div class="screen-body">
+          <p>Staff-facing item entry: every field your org configured shows up in order, plus category picking from the event’s tree.</p>
+          <p>There is a switch for whether this item should complete check-in now or stay pending until someone finishes receive steps—handy when the physical item is not in hand yet.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Item details</h3>
+        <p class="screen-meta"><code>…/check-in/item-details</code> · <code>item-details.tsx</code></p>
+        <div class="screen-body">
+          <p>This is where intake becomes real: you see the item, its status, and you are asked to document receipt—usually a photo on device, or a short written handoff note on web—before you mark it ready for the floor.</p>
+          <p>You can print a single tag, move statuses along, and optionally ping the seller that their gear was checked in.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-pos">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — point of sale</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Point of sale</h3>
+        <p class="screen-meta"><code>/(event)/pos</code> · <code>pos/index.tsx</code></p>
+        <div class="screen-body">
+          <p>Cashier mode. You scan or paste an item QR, confirm you have the right piece of gear (including a peek at the check-in photo if one exists), then enter buyer contact and the sale price.</p>
+          <p>Receipts can go out by SMS or as a QR flow the buyer scans—whichever fits the line forming behind you.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-pickup">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — pickup</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Pickup</h3>
+        <p class="screen-meta"><code>/(event)/pickup</code> · <code>pickup/index.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>End-of-event desk for money and unsold gear. Non-admins are redirected back to manage.</p>
+          <p>Admins scan or find a seller, see payout math (what sold, what is still owed), mark items or whole sellers as paid, handle donations, and move eligible pieces into organization inventory when that is part of your workflow.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-organizer-reports">
+    <button type="button" class="back" data-nav="organizer-menu">← Organizer sections</button>
+    <h2 class="page-title">Organizer — reports</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Reports</h3>
+        <p class="screen-meta"><code>/(event)/reports</code> · <code>reports/index.tsx</code> · admins only</p>
+        <div class="screen-body">
+          <p>A readout of how the event performed: counts and totals, export to CSV for consignee-style reconciliation, declaring the event closed, and donation-related actions where your rules apply.</p>
+          <p>Volunteers without admin financial access should not see this screen.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-seller-intro">
+    <button type="button" class="back" data-nav="seller-menu">← Seller sections</button>
+    <h2 class="page-title">Seller — around the app</h2>
+    <div class="screen-list">
+      <div class="block-text" style="margin-bottom:0">
+        <p style="margin:0 0 0.75rem">When you are logged in, the app wires up <strong>push notifications</strong> so you can hear about sales.</p>
+        <p style="margin:0">If you are logged out, almost every path sends you to <strong>login</strong>—except someone shares a direct <code>/event/…</code> link, which still opens so you can read the flyer-style event page before you commit to signing in.</p>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-seller-auth">
+    <button type="button" class="back" data-nav="seller-menu">← Seller sections</button>
+    <h2 class="page-title">Seller — auth &amp; onboarding</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Login</h3>
+        <p class="screen-meta"><code>/(auth)/login</code> · <code>(auth)/login.tsx</code></p>
+        <div class="screen-body">
+          <p>You type a US phone number and request a texted code. In development there may be a bypass so you are not blocked when SMS is flaky.</p>
+          <p>If you arrived from an invite link, a redirect parameter quietly brings you back to that event after you authenticate.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Verify phone</h3>
+        <p class="screen-meta"><code>/(auth)/verify-phone</code> · <code>verify-phone.tsx</code></p>
+        <div class="screen-body">
+          <p>Standard “enter the six digits we texted you” step. You can resend if the code expired.</p>
+          <p>Successful verification hands off to whatever screen you still need—sometimes complete profile, sometimes straight into the tabs.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Complete profile</h3>
+        <p class="screen-meta"><code>/(auth)/complete-profile</code> · <code>complete-profile.tsx</code></p>
+        <div class="screen-body">
+          <p>First-time sellers see a friendly form for first name, last name, and optionally email.</p>
+          <p>If the system already has a seller row for your account, this screen simply forwards you on—you do not fill it twice.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Signup (legacy)</h3>
+        <p class="screen-meta"><code>/(auth)/signup</code> · <code>(auth)/signup.tsx</code></p>
+        <div class="screen-body">
+          <p>Old bookmarks still hit <code>/signup</code>. You only see a spinner for a moment.</p>
+          <p>The app immediately replaces the route with login because phone sign-in is how new sellers are created now.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-seller-tabs">
+    <button type="button" class="back" data-nav="seller-menu">← Seller sections</button>
+    <h2 class="page-title">Seller — main tabs</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Home / dashboard</h3>
+        <p class="screen-meta"><code>/(tabs)</code> · <code>(tabs)/index.tsx</code></p>
+        <div class="screen-body">
+          <p>This is your living room for the event you care about right now: your name, phone, seller QR staff can scan, every item you have in that event with color-coded status, rough payout estimates after commission, and—when staff have documented check-in—any check-in notes or photos you are allowed to see.</p>
+          <p>You can pull to refresh, switch which event you are focused on, jump to your profile, add or edit listings, delete things that are still pending (not handed in yet), or sign out.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">My items</h3>
+        <p class="screen-meta"><code>/(tabs)/items</code> · <code>items.tsx</code></p>
+        <div class="screen-body">
+          <p>A tighter list of the same inventory for people who live on the second tab—same statuses and delete rules for pending rows.</p>
+          <p>Tapping an item takes you into the add/edit flow when the app allows edits.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Notifications</h3>
+        <p class="screen-meta"><code>/(tabs)/notifications</code> · <code>notifications.tsx</code></p>
+        <div class="screen-body">
+          <p>A chronological feed of things that sold: what it was called, what it sold for, what you keep after fees, and when it happened.</p>
+          <p>Pull to refresh when you are killing time between rack visits; the list also refreshes when you return to the tab.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Profile</h3>
+        <p class="screen-meta"><code>/(tabs)/profile</code> · <code>profile.tsx</code></p>
+        <div class="screen-body">
+          <p>Simple self-service: your display name fields and a save button, plus sign out.</p>
+          <p>Signing out also forgets which event you had pinned to the dashboard so the next login starts clean.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-seller-event">
+    <button type="button" class="back" data-nav="seller-menu">← Seller sections</button>
+    <h2 class="page-title">Seller — event routes</h2>
+    <div class="screen-list">
+      <article class="screen">
+        <h3 class="screen-title">Event landing</h3>
+        <p class="screen-meta"><code>/event/[id]</code> · <code>event/[id]/index.tsx</code></p>
+        <div class="screen-body">
+          <p>Anyone with the link sees a polished event flyer in the app: host org, schedule, registration window, commission language, pickup times.</p>
+          <p>If registration is open and you are not signed in, you get buttons to sign in or create an account that remember this event. If you are already signed in, you can jump straight to your dashboard or start pre-registering items for this swap.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Add or edit item (event)</h3>
+        <p class="screen-meta"><code>/event/[id]/add-item</code> · <code>event/[id]/add-item.tsx</code></p>
+        <div class="screen-body">
+          <p>The full seller item builder: pick type/category, fill every field the organizers require, preview how tag-oriented fields line up, and save.</p>
+          <p>If you opened an existing item id, you are editing instead of creating. Saving also pins this event as your “current” one on the home tab when that is helpful.</p>
+        </div>
+      </article>
+      <article class="screen">
+        <h3 class="screen-title">Register (legacy URL)</h3>
+        <p class="screen-meta"><code>/event/[id]/register</code> · <code>event/[id]/register.tsx</code></p>
+        <div class="screen-body">
+          <p>Printed QR codes from an older flow might still point here. You see a short “taking you to your dashboard” message.</p>
+          <p>The app stores the event id and sends you to the main tabs experience—there is no separate in-app registration wizard anymore.</p>
+        </div>
+      </article>
+    </div>
+  </template>
+
+  <template id="tpl-about">
+    <button type="button" class="back" data-nav="home">← Home</button>
+    <h2 class="page-title">How this doc fits the code</h2>
+    <div class="block-text">
+      <p style="margin:0 0 0.75rem">The paragraphs in this outline stay at the level a volunteer lead could skim before training day. They are not exhaustive of every validation message or edge case.</p>
+      <p style="margin:0 0 0.75rem">That deeper behavior lives in <code>packages/shared</code>—hooks, Supabase helpers, shared types—while each screen in the apps wires those pieces into something a human taps through.</p>
+      <p style="margin:0">When you add a new screen under <code>app/</code>, add a short subsection to <a href="./Outline.md">Outline.md</a> and mirror it in the right section of this <a href="./Outline.html">Outline.html</a> file so both stay in sync.</p>
+    </div>
+  </template>
+
+  <script>
+    (function () {
+      var main = document.getElementById("main");
+      var crumb = document.getElementById("breadcrumb");
+
+      var titles = {
+        home: "Home",
+        "organizer-menu": "Organizer · sections",
+        "organizer-intro": "Organizer · global chrome",
+        "organizer-auth": "Organizer · authentication",
+        "organizer-dashboard": "Organizer · dashboard",
+        "organizer-event": "Organizer · event hub",
+        "organizer-checkin": "Organizer · check-in",
+        "organizer-pos": "Organizer · POS",
+        "organizer-pickup": "Organizer · pickup",
+        "organizer-reports": "Organizer · reports",
+        "seller-menu": "Seller · sections",
+        "seller-intro": "Seller · behavior",
+        "seller-auth": "Seller · auth",
+        "seller-tabs": "Seller · tabs",
+        "seller-event": "Seller · event routes",
+        about: "How this doc fits the code",
+      };
+
+      function breadcrumb(id) {
+        if (id === "home") {
+          crumb.innerHTML = "<strong>Home</strong>";
+          return;
+        }
+        var isOrg = id.indexOf("organizer") === 0;
+        var isSel = id.indexOf("seller") === 0;
+        var home = '<button type="button" data-nav="home" style="all:unset;cursor:pointer;color:inherit">Home</button>';
+        if (id === "about") {
+          crumb.innerHTML = home + " · <strong>How this doc fits the code</strong>";
+          return;
+        }
+        if (isOrg && id !== "organizer-menu") {
+          crumb.innerHTML =
+            home +
+            ' · <button type="button" data-nav="organizer-menu" style="all:unset;cursor:pointer;color:inherit">Organizer</button> · <strong>' +
+            titles[id].replace(/^Organizer · /, "") +
+            "</strong>";
+          return;
+        }
+        if (isSel && id !== "seller-menu") {
+          crumb.innerHTML =
+            home +
+            ' · <button type="button" data-nav="seller-menu" style="all:unset;cursor:pointer;color:inherit">Seller</button> · <strong>' +
+            titles[id].replace(/^Seller · /, "") +
+            "</strong>";
+          return;
+        }
+        crumb.innerHTML = home + " · <strong>" + titles[id] + "</strong>";
+      }
+
+      function navigate(id) {
+        location.hash = id;
+      }
+
+      window.addEventListener("hashchange", function () {
+        show(parseHash());
+      });
+
+      function parseHash() {
+        var h = (location.hash || "#home").slice(1);
+        if (!h || !document.getElementById("tpl-" + h)) return "home";
+        return h;
+      }
+
+      function show(id) {
+        var tid = "tpl-" + id;
+        var tpl = document.getElementById(tid);
+        if (!tpl) id = "home";
+        tpl = document.getElementById("tpl-" + id);
+        main.innerHTML = "";
+        main.appendChild(tpl.content.cloneNode(true));
+        main.querySelectorAll("[data-nav]").forEach(function (el) {
+          el.addEventListener("click", function () {
+            var target = el.getAttribute("data-nav");
+            if (target) navigate(target);
+          });
+        });
+        if (location.hash.slice(1) !== id) location.hash = id;
+        breadcrumb(id);
+        crumb.querySelectorAll("[data-nav]").forEach(function (el) {
+          el.addEventListener("click", function () {
+            navigate(el.getAttribute("data-nav"));
+          });
+        });
+      }
+
+      show(parseHash());
+    })();
+  </script>
+</body>
+</html>

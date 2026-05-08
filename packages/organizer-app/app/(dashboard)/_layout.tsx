@@ -23,6 +23,8 @@ export default function DashboardLayout() {
       <Stack.Screen name="commission-rates" options={{ title: 'Commission Rates' }} />
       <Stack.Screen name="field-definitions" options={{ title: 'Item Fields' }} />
       <Stack.Screen name="gear-tags" options={{ headerShown: false }} />
+      <Stack.Screen name="seller-receipts" options={{ headerShown: false }} />
+      <Stack.Screen name="sale-settings" options={{ title: 'Sale settings' }} />
       <Stack.Screen name="price-reduction-settings" options={{ title: 'Price Reductions' }} />
       <Stack.Screen name="swap-registration-fields" options={{ title: 'Seller Registration Form' }} />
       <Stack.Screen name="staff-accounts" options={{ title: 'Staff Accounts' }} />

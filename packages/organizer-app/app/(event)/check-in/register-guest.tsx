@@ -1,7 +1,8 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Switch } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { useEvent, createGuestSeller, getCurrentUser } from 'shared';
+import { useEvent, createGuestSeller, getCurrentUser, STAFF_MOBILE_EDGE_PADDING, STAFF_MOBILE_HEADER_PADDING_TOP, STAFF_MOBILE_MIN_TOUCH_HEIGHT } from 'shared';
+import { popOrCheckInHome } from '../../../lib/checkInNavigation';
 
 export default function RegisterGuestSellerScreen() {
   const { eventId } = useLocalSearchParams<{ eventId: string }>();
@@ -139,7 +140,7 @@ export default function RegisterGuestSellerScreen() {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Event not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backButton} onPress={() => popOrCheckInHome(router, eventId)}>
           <Text style={styles.backButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -149,7 +150,7 @@ export default function RegisterGuestSellerScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => popOrCheckInHome(router, eventId)} style={styles.backButton}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Register Guest Seller</Text>
@@ -353,15 +354,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   loadingText: {
     marginTop: 10,
     color: '#666',
   },
   header: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_HEADER_PADDING_TOP,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
@@ -385,7 +387,9 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   form: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 24,
   },
   section: {
     marginBottom: 32,
@@ -440,18 +444,24 @@ const styles = StyleSheet.create({
   textInput: {
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#E5E5E5',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   submitButton: {
     backgroundColor: '#007AFF',
     borderRadius: 12,
-    padding: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
     marginTop: 8,
     marginBottom: 16,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   submitButtonDisabled: {
     opacity: 0.5,

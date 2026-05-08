@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { updateAuthenticatedUserPassword } from 'shared';
+import { FORM_CONTROL_MAX_WIDTH, updateAuthenticatedUserPassword } from 'shared';
 import { theme } from '../../lib/theme';
 
 export default function ResetPasswordScreen() {
@@ -144,6 +144,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
+    alignSelf: 'center',
     marginTop: 8,
   },
   primaryButtonText: { color: theme.buttonText, fontSize: 17, fontWeight: '600' },

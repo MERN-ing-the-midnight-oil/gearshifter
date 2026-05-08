@@ -13,7 +13,7 @@
 // 3. Phomemo M110 may require image-based printing fallback for QR codes (see printQRCodeAsImage)
 
 import RNThermalPrinter from 'react-native-thermal-printer';
-import type { Item, Event } from 'shared';
+import type { Item, Event, Transaction } from 'shared';
 import type { GearTagTemplate } from 'shared';
 import {
   formatAutomaticGearTagPriceLines,
@@ -41,6 +41,16 @@ export interface PrintOptions {
   event?: Event | null;
   qrCodeData?: string;
   includeQRCode?: boolean;
+}
+
+/** Thermal slip for seller after POS (templates mirror gear-tag layout metadata). */
+export interface SellerReceiptPrintOptions {
+  tagTemplate: GearTagTemplate;
+  item: Item;
+  transaction: Transaction;
+  event?: Event | null;
+  sellerDisplayName?: string | null;
+  buyerReceiptUrl?: string | null;
 }
 
 class PrinterService {
@@ -119,6 +129,39 @@ class PrinterService {
    * Print a formatted tag for an item
    * This method formats the tag according to the template and prints it
    */
+  /**
+   * Print a seller-facing sale receipt using the organization's receipt template.
+   * QR (optional on template) encodes `buyerReceiptUrl` so the seller can scan the buyer's detailed receipt page.
+   */
+  async printSellerReceipt(options: SellerReceiptPrintOptions): Promise<boolean> {
+    if (!this.currentDevice?.isConnected) {
+      this.error = 'No printer connected';
+      return false;
+    }
+
+    if (this.isPrinting) {
+      this.error = 'Print job already in progress';
+      return false;
+    }
+
+    try {
+      this.isPrinting = true;
+      this.error = null;
+
+      const tagContent = this.formatSellerReceiptContent(options);
+      await RNThermalPrinter.printText(tagContent);
+      await RNThermalPrinter.cutPaper();
+
+      this.isPrinting = false;
+      return true;
+    } catch (err) {
+      this.isPrinting = false;
+      this.error = err instanceof Error ? err.message : 'Print failed';
+      console.error('Seller receipt print error:', err);
+      return false;
+    }
+  }
+
   async printTag(options: PrintOptions): Promise<boolean> {
     if (!this.currentDevice?.isConnected) {
       this.error = 'No printer connected';
@@ -189,6 +232,11 @@ class PrinterService {
           const label = field.label || field.field;
           const formattedValue = this.formatFieldValue(value, field.format);
           let fieldText = field.hideLabelOnTag ? formattedValue : `${label}: ${formattedValue}`;
+          const emojiPrefix =
+            typeof field.tagLineEmoji === 'string' && field.tagLineEmoji.trim()
+              ? `${field.tagLineEmoji.trim()} `
+              : '';
+          fieldText = emojiPrefix + fieldText;
 
           // Truncate if maxLength specified
           const maxLen = field.maxLength ?? 50;
@@ -263,6 +311,11 @@ class PrinterService {
             break;
         }
 
+        const offX = Math.round((template.qrCodeOffsetXMm ?? 0) * DOTS_PER_MM);
+        const offY = Math.round((template.qrCodeOffsetYMm ?? 0) * DOTS_PER_MM);
+        qrX += offX;
+        qrY += offY;
+
         // Position for QR code
         const qrNL = qrX & 0xFF;
         const qrNH = (qrX >> 8) & 0xFF;
@@ -312,6 +365,178 @@ class PrinterService {
     content += '\x1B\x45\x00'; // Normal weight
 
     return content;
+  }
+
+  private formatSellerReceiptContent(opts: SellerReceiptPrintOptions): string {
+    const { tagTemplate: template, item, transaction, event, sellerDisplayName, buyerReceiptUrl } =
+      opts;
+
+    let content = '';
+    content += '\x1B\x40';
+    content += '\x1B\x20\x00';
+    content += '\x1B\x33\x18';
+
+    const printedAt = new Date();
+
+    if (template.name) {
+      content += `\x1B\x45\x01${template.name}\n\x1B\x45\x00`;
+    }
+
+    if (template.tagFields && template.tagFields.length > 0) {
+      template.tagFields.forEach((field) => {
+        const value = this.getSellerReceiptFieldValue(field.field, {
+          item,
+          transaction,
+          event,
+          sellerDisplayName,
+          printedAt,
+        });
+        if (value === null || value === undefined) return;
+        if (String(value).trim().length === 0) return;
+
+        const label = field.label || field.field;
+        const formattedValue = this.formatFieldValue(value, field.format);
+        let fieldText = field.hideLabelOnTag ? formattedValue : `${label}: ${formattedValue}`;
+        const emojiPrefix =
+          typeof field.tagLineEmoji === 'string' && field.tagLineEmoji.trim()
+            ? `${field.tagLineEmoji.trim()} `
+            : '';
+        fieldText = emojiPrefix + fieldText;
+
+        const maxLen = field.maxLength ?? 72;
+        if (fieldText.length > maxLen) {
+          fieldText = fieldText.substring(0, maxLen - 3) + '...';
+        }
+
+        if (field.fontSize) {
+          let sizeByte = 0;
+          if (field.fontSize >= 16) sizeByte = 0x11;
+          else if (field.fontSize >= 12) sizeByte = 0x10;
+          if (sizeByte > 0) {
+            content += `\x1B\x21${String.fromCharCode(sizeByte)}`;
+          }
+        }
+
+        if (field.fontWeight === 'bold') {
+          content += '\x1B\x45\x01';
+        }
+
+        content += fieldText;
+
+        if (field.fontWeight === 'bold') {
+          content += '\x1B\x45\x00';
+        }
+        if (field.fontSize && field.fontSize >= 12) {
+          content += '\x1B\x21\x00';
+        }
+
+        content += '\n';
+      });
+    } else {
+      const summary = this.getSellerReceiptFieldValue('sale_summary', {
+        item,
+        transaction,
+        event,
+        sellerDisplayName,
+        printedAt,
+      });
+      if (summary != null && String(summary).trim()) {
+        content += `${String(summary)}\n`;
+      }
+    }
+
+    if (template.qrCodeEnabled && buyerReceiptUrl?.trim()) {
+      const DOTS_PER_MM = 8;
+      const qrSize = template.qrCodeSize || 14;
+      let qrX = 0;
+      let qrY = 0;
+      switch (template.qrCodePosition) {
+        case 'top-left':
+          qrX = 5 * DOTS_PER_MM;
+          qrY = 5 * DOTS_PER_MM;
+          break;
+        case 'top-right':
+          qrX = Math.round((template.widthMm - qrSize - 5) * DOTS_PER_MM);
+          qrY = 5 * DOTS_PER_MM;
+          break;
+        case 'bottom-left':
+          qrX = 5 * DOTS_PER_MM;
+          qrY = Math.round((template.heightMm - qrSize - 5) * DOTS_PER_MM);
+          break;
+        case 'bottom-right':
+          qrX = Math.round((template.widthMm - qrSize - 5) * DOTS_PER_MM);
+          qrY = Math.round((template.heightMm - qrSize - 5) * DOTS_PER_MM);
+          break;
+        case 'center':
+          qrX = Math.round(((template.widthMm - qrSize) / 2) * DOTS_PER_MM);
+          qrY = Math.round(((template.heightMm - qrSize) / 2) * DOTS_PER_MM);
+          break;
+      }
+      const offX = Math.round((template.qrCodeOffsetXMm ?? 0) * DOTS_PER_MM);
+      const offY = Math.round((template.qrCodeOffsetYMm ?? 0) * DOTS_PER_MM);
+      qrX += offX;
+      qrY += offY;
+
+      const qrNL = qrX & 0xff;
+      const qrNH = (qrX >> 8) & 0xff;
+      content += `\x1B\x24${String.fromCharCode(qrNL)}${String.fromCharCode(qrNH)}`;
+      content += `\n[QR buyer receipt]\n`;
+      content += `${buyerReceiptUrl.substring(0, 48)}...\n`;
+    }
+
+    content += '\x1B\x61\x00';
+    content += '\x1B\x21\x00';
+    content += '\x1B\x45\x00';
+
+    return content;
+  }
+
+  private getSellerReceiptFieldValue(
+    fieldName: string,
+    ctx: {
+      item: Item;
+      transaction: Transaction;
+      event?: Event | null;
+      sellerDisplayName?: string | null;
+      printedAt: Date;
+    }
+  ): string | number | null {
+    const { item, transaction, event, sellerDisplayName, printedAt } = ctx;
+    switch (fieldName) {
+      case 'sale_summary': {
+        const buyer = (transaction.buyerName || '').trim() || '—';
+        const when = transaction.soldAt.toLocaleString();
+        const price = Number(transaction.soldPrice);
+        const amt = Number.isFinite(price) ? `$${price.toFixed(2)}` : String(transaction.soldPrice);
+        return `Sold to ${buyer} at ${when} for ${amt}`;
+      }
+      case 'buyer_name':
+        return transaction.buyerName || '';
+      case 'buyer_phone':
+        return transaction.buyerPhone?.trim() || null;
+      case 'buyer_email':
+        return transaction.buyerEmail?.trim() || null;
+      case 'sale_datetime':
+        return transaction.soldAt.toLocaleString();
+      case 'printed_datetime':
+        return printedAt.toLocaleString();
+      case 'item_number':
+        return item.itemNumber;
+      case 'item_description':
+        return item.description || null;
+      case 'sold_price':
+        return transaction.soldPrice;
+      case 'seller_amount':
+        return transaction.sellerAmount;
+      case 'commission_amount':
+        return transaction.commissionAmount;
+      case 'event_name':
+        return event?.name || null;
+      case 'seller_name':
+        return sellerDisplayName?.trim() || null;
+      default:
+        return null;
+    }
   }
 
   /**

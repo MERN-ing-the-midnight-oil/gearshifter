@@ -11,6 +11,7 @@ import {
   Pressable,
 } from 'react-native';
 import { StaffSellerQrSection } from '../../components/StaffSellerQrSection';
+import { SellerItemCheckInDoc } from '../../components/SellerItemCheckInDoc';
 import {
   useAuth,
   useEvent,
@@ -24,8 +25,9 @@ import {
   type Item,
   type ItemStatus,
   type Organization,
+  type Seller,
 } from 'shared';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useState, useEffect } from 'react';
 import { confirmAction } from '../../lib/alerts';
 import { clearSellerDashboardEventId } from '../../lib/sellerDashboardEventStorage';
@@ -89,6 +91,7 @@ export default function DashboardScreen() {
   const [sellerProfileEmail, setSellerProfileEmail] = useState<string | null>(null);
   const [sellerPhone, setSellerPhone] = useState<string | null>(null);
   const [sellerRecordId, setSellerRecordId] = useState<string | null>(null);
+  const [sellerProfile, setSellerProfile] = useState<Seller | null>(null);
 
   const { scopedEventId, scopeReady } = useSellerScopedEventId(sellerRecordId);
   const {
@@ -106,7 +109,14 @@ export default function DashboardScreen() {
 
   // Load seller profile to display friendly name and items (seller row id ≠ auth user id)
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      setSellerName(null);
+      setSellerProfileEmail(null);
+      setSellerPhone(null);
+      setSellerRecordId(null);
+      setSellerProfile(null);
+      return;
+    }
 
     let isCancelled = false;
 
@@ -119,6 +129,13 @@ export default function DashboardScreen() {
           setSellerProfileEmail(seller.email?.trim() || null);
           setSellerPhone(seller.phone?.trim() || null);
           setSellerRecordId(seller.id);
+          setSellerProfile(seller);
+        } else if (!isCancelled) {
+          setSellerName(null);
+          setSellerProfileEmail(null);
+          setSellerPhone(null);
+          setSellerRecordId(null);
+          setSellerProfile(null);
         }
       } catch (error) {
         console.warn('Failed to load seller profile for dashboard header:', error);
@@ -224,6 +241,33 @@ export default function DashboardScreen() {
     }).format(date);
   };
 
+  /** Prefer hydrated event id; fall back to scoped id so the CTA is not stuck if `useEvent` and storage disagree briefly. */
+  const preRegisterEventId = scopedEvent?.id ?? scopedEventId ?? null;
+
+  const navigateToPreRegister = () => {
+    console.log('[SellerDashboard] Pre-register CTA', {
+      preRegisterEventId,
+      scopedEventId,
+      scopedEventHydrated: !!scopedEvent,
+      sellerRecordId: sellerRecordId ?? undefined,
+      scopeReady,
+    });
+    if (!preRegisterEventId) {
+      console.warn('[SellerDashboard] Pre-register blocked: no event id (link an event from your organizer sign-up flow)');
+      return;
+    }
+    const href = {
+      pathname: '/event/[id]/add-item' as const,
+      params: { id: preRegisterEventId },
+    } satisfies Href;
+    console.log('[SellerDashboard] router.push', href);
+    try {
+      router.push(href);
+    } catch (e) {
+      console.error('[SellerDashboard] router.push failed', e);
+    }
+  };
+
   return (
     <ScrollView
       style={styles.container}
@@ -261,6 +305,66 @@ export default function DashboardScreen() {
           </View>
         </View>
         <View style={styles.eventDropdownShell}>
+          <View style={styles.contactCard}>
+            <Text style={styles.contactCardTitle}>Your seller info</Text>
+            <Text style={styles.contactCardHint}>
+              This is everything currently saved on your seller profile for this account.
+            </Text>
+            {sellerName ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Name</Text>
+                <Text style={styles.contactValue}>{sellerName}</Text>
+              </View>
+            ) : null}
+            {sellerPhone ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Phone</Text>
+                <Text style={styles.contactValue}>{formatPhoneForDisplay(sellerPhone)}</Text>
+              </View>
+            ) : null}
+            {(user?.email || sellerProfileEmail) ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Email</Text>
+                <Text style={styles.contactValue}>{user?.email ?? sellerProfileEmail}</Text>
+              </View>
+            ) : null}
+            {sellerProfile?.address ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Address</Text>
+                <Text style={styles.contactValue}>
+                  {[
+                    sellerProfile.address,
+                    sellerProfile.addressLine2,
+                    [sellerProfile.city, sellerProfile.state].filter(Boolean).join(', '),
+                    sellerProfile.zipCode,
+                    sellerProfile.country,
+                  ]
+                    .filter((part) => typeof part === 'string' && part.trim().length > 0)
+                    .join(', ')}
+                </Text>
+              </View>
+            ) : null}
+            <View style={styles.contactRow}>
+              <Text style={styles.contactLabel}>Account</Text>
+              <Text style={styles.contactValue}>{sellerProfile?.isGuest ? 'Guest seller' : 'App account'}</Text>
+            </View>
+            {sellerProfile?.photoIdVerified ? (
+              <View style={styles.contactRow}>
+                <Text style={styles.contactLabel}>Photo ID</Text>
+                <Text style={styles.contactValue}>Verified</Text>
+              </View>
+            ) : null}
+            <TouchableOpacity
+              style={styles.contactProfileButton}
+              onPress={() => router.push('/(tabs)/profile')}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.contactProfileButtonText}>Edit name on Profile</Text>
+            </TouchableOpacity>
+            {sellerRecordId ? (
+              <StaffSellerQrSection qrPayload={generateSellerQRCode(sellerRecordId)} />
+            ) : null}
+          </View>
           <View style={styles.eventCarouselHeader}>
             <Text style={styles.eventCarouselLabel}>Your sale</Text>
           </View>
@@ -337,41 +441,6 @@ export default function DashboardScreen() {
             </View>
           )}
         </View>
-        {scopedEvent && sellerRecordId ? (
-          <View style={styles.contactCard}>
-            <Text style={styles.contactCardTitle}>You&apos;re signed up for this sale</Text>
-            <Text style={styles.contactCardHint}>
-              Phone verification registers you for the swap. Your contact details are below; you can update your
-              name on the Profile tab.
-            </Text>
-            {sellerName ? (
-              <View style={styles.contactRow}>
-                <Text style={styles.contactLabel}>Name</Text>
-                <Text style={styles.contactValue}>{sellerName}</Text>
-              </View>
-            ) : null}
-            {sellerPhone ? (
-              <View style={styles.contactRow}>
-                <Text style={styles.contactLabel}>Phone</Text>
-                <Text style={styles.contactValue}>{formatPhoneForDisplay(sellerPhone)}</Text>
-              </View>
-            ) : null}
-            {(user?.email || sellerProfileEmail) ? (
-              <View style={styles.contactRow}>
-                <Text style={styles.contactLabel}>Email</Text>
-                <Text style={styles.contactValue}>{user?.email ?? sellerProfileEmail}</Text>
-              </View>
-            ) : null}
-            <TouchableOpacity
-              style={styles.contactProfileButton}
-              onPress={() => router.push('/(tabs)/profile')}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.contactProfileButtonText}>Edit name on Profile</Text>
-            </TouchableOpacity>
-            <StaffSellerQrSection qrPayload={generateSellerQRCode(sellerRecordId)} />
-          </View>
-        ) : null}
       </View>
 
       {sellerRecordId && scopedEvent && (
@@ -423,11 +492,12 @@ export default function DashboardScreen() {
           staff check it in.
         </Text>
         <TouchableOpacity
-          style={[styles.registerItemButton, !scopedEvent && styles.registerItemButtonDisabled]}
-          onPress={() => {
-            if (scopedEvent) router.push(`/event/${scopedEvent.id}/add-item`);
-          }}
-          disabled={!scopedEvent}
+          style={[
+            styles.registerItemButton,
+            !preRegisterEventId && styles.registerItemButtonDisabled,
+          ]}
+          onPress={navigateToPreRegister}
+          disabled={!preRegisterEventId}
           activeOpacity={0.8}
         >
           <Text style={styles.registerItemPlus}>+</Text>
@@ -496,6 +566,7 @@ function ItemSummaryRow({
       <Text style={styles.itemDescription} numberOfLines={2}>
         {desc}
       </Text>
+      <SellerItemCheckInDoc item={item} />
       <View style={styles.itemPriceBlock}>
         <Text style={styles.itemPriceLine}>
           <Text style={styles.itemPriceLabel}>{priceLabel}: </Text>

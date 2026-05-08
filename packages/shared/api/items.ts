@@ -536,6 +536,39 @@ export const deleteSellerPendingItem = async (itemId: string): Promise<void> => 
   }
 };
 
+/** Minimum length for org-entered handoff text when no check-in photo. */
+export const MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH = 12;
+
+export function itemHasCheckInReceiveDocumentation(item: Item): boolean {
+  if (item.checkInPhotoStoragePath?.trim()) return true;
+  const t = item.checkInStaffDescription?.trim() ?? '';
+  return t.length >= MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH;
+}
+
+/**
+ * Org staff: save handoff description (at physical check-in). Cleared when passing empty string.
+ */
+export const updateItemCheckInStaffDescription = async (
+  itemId: string,
+  description: string | null | undefined
+): Promise<Item> => {
+  const trimmed = (description ?? '').trim();
+  const { data, error } = await supabase
+    .from('items')
+    .update({ check_in_staff_description: trimmed.length > 0 ? trimmed : null })
+    .eq('id', itemId)
+    .select()
+    .single();
+
+  if (error && isPgrstMissingColumn(error, 'check_in_staff_description')) {
+    throw new Error(
+      'This project database is missing items.check_in_staff_description. Apply supabase/migrations/20260506153000_check_in_staff_description.sql (or run supabase db push), then try again.'
+    );
+  }
+  if (error) throw error;
+  return mapItemFromDb(data);
+};
+
 /**
  * Update item status (for org users during check-in, POS, etc.)
  * Lifecycle includes terminal states: picked_up, donated, donated_abandoned, unclaimed, withdrawn, lost, damaged.
@@ -644,6 +677,9 @@ function mapItemFromDb(dbItem: any): Item {
     checkInPhotoStoragePath: dbItem.check_in_photo_storage_path ?? undefined,
     checkInPhotoCapturedAt: dbItem.check_in_photo_captured_at
       ? new Date(dbItem.check_in_photo_captured_at)
+      : undefined,
+    checkInStaffDescription: dbItem.check_in_staff_description?.trim()
+      ? String(dbItem.check_in_staff_description).trim()
       : undefined,
     checkedInAt: dbItem.checked_in_at ? new Date(dbItem.checked_in_at) : undefined,
     soldAt: dbItem.sold_at ? new Date(dbItem.sold_at) : undefined,

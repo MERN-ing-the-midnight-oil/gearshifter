@@ -324,10 +324,6 @@ export default function ManageEventScreen() {
     }
   };
 
-  const openStation = () => {
-    if (eventId) router.push(`/(event)/stations?id=${eventId}`);
-  };
-
   const saveItemTypeSettings = async () => {
     if (!eventId || !event || !isAdmin) return;
     if (restrictItemCategories && selectedAllowedCategoryIds.length === 0) {
@@ -632,12 +628,6 @@ export default function ManageEventScreen() {
             ))
           )}
         </View>
-      </View>
-
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.primaryButton} onPress={openStation}>
-          <Text style={styles.primaryButtonText}>Open station (check-in, POS, pickup)</Text>
-        </TouchableOpacity>
       </View>
 
       <Modal
@@ -1218,21 +1208,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: theme.link,
-  },
-  footer: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  primaryButton: {
-    backgroundColor: theme.button,
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: theme.buttonText,
   },
   modalOverlay: {
     flex: 1,

@@ -51,7 +51,14 @@ Deno.serve(async (req) => {
     );
   }
 
-  let body: { first_name?: string; last_name?: string; phone?: string; email?: string };
+  let body: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    email?: string;
+    /** When set (organizer walk-up check-in), links seller to event so org RLS can SELECT the seller row */
+    event_id?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -65,6 +72,12 @@ Deno.serve(async (req) => {
   const last_name = typeof body.last_name === 'string' ? body.last_name.trim() : '';
   const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
   const email = typeof body.email === 'string' ? body.email.trim() : '';
+  const event_id_raw = typeof body.event_id === 'string' ? body.event_id.trim() : '';
+  const event_id = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    event_id_raw
+  )
+    ? event_id_raw
+    : '';
 
   if (!first_name || !last_name || !phone || !email) {
     return new Response(
@@ -131,6 +144,39 @@ Deno.serve(async (req) => {
       JSON.stringify({ error: insertError.message }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
+  }
+
+  if (event_id) {
+    const { data: eventRow, error: eventErr } = await supabase
+      .from('events')
+      .select('id')
+      .eq('id', event_id)
+      .maybeSingle();
+
+    if (eventErr || !eventRow) {
+      await supabase.from('sellers').delete().eq('id', sellerId);
+      await supabase.auth.admin.deleteUser(authUserId);
+      return new Response(JSON.stringify({ error: 'Invalid event_id' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { error: regErr } = await supabase.from('seller_swap_registrations').insert({
+      event_id,
+      seller_id: sellerId,
+      registration_data: {},
+      is_complete: false,
+    });
+
+    if (regErr) {
+      await supabase.from('sellers').delete().eq('id', sellerId);
+      await supabase.auth.admin.deleteUser(authUserId);
+      return new Response(JSON.stringify({ error: regErr.message }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
   }
 
   return new Response(

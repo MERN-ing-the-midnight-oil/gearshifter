@@ -1,5 +1,5 @@
-// Supabase Edge Function: send Expo push when a sale is recorded (called by organizer after recordSale).
-// Verifies JWT belongs to an org user who can read the transaction, then uses service role to read seller push token.
+// Supabase Edge: after a sale — optional Expo push + optional Twilio SMS to seller (org `sale_behavior_settings`).
+// Verifies JWT can read the transaction, then uses service role for seller/org data.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -7,6 +7,63 @@ const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+type SaleBehaviorSettings = {
+  notifySellerSmsOnSale?: boolean;
+  notifySellerPushOnSale?: boolean;
+};
+
+function tryNormalizePhoneE164US(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  const digits = t.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (t.startsWith('+') && digits.length >= 10) return `+${digits}`;
+  return null;
+}
+
+async function sendTwilioSms(to: string, body: string): Promise<{ ok: boolean; detail?: unknown }> {
+  const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
+  const authToken = Deno.env.get('TWILIO_AUTH_TOKEN');
+  const fromNumber = Deno.env.get('TWILIO_FROM_NUMBER');
+  const messagingServiceSid = Deno.env.get('TWILIO_MESSAGING_SERVICE_SID');
+  if (!accountSid || !authToken) {
+    return { ok: false, detail: 'Twilio credentials missing' };
+  }
+  const mg = messagingServiceSid?.trim();
+  if (!mg && !fromNumber?.trim()) {
+    return { ok: false, detail: 'Set TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID' };
+  }
+  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+  const authHeader = 'Basic ' + btoa(`${accountSid}:${authToken}`);
+  const form = new URLSearchParams({ To: to, Body: body });
+  if (mg) form.set('MessagingServiceSid', mg);
+  else form.set('From', fromNumber!.trim());
+
+  const tw = await fetch(twilioUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: authHeader,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: form.toString(),
+  });
+  const twJson = (await tw.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!tw.ok) {
+    return { ok: false, detail: twJson };
+  }
+  const twilioStatus = typeof twJson.status === 'string' ? twJson.status.trim().toLowerCase() : '';
+  if (
+    twJson.error_code != null ||
+    twilioStatus === 'failed' ||
+    twilioStatus === 'undelivered' ||
+    twilioStatus === 'canceled'
+  ) {
+    return { ok: false, detail: twJson };
+  }
+  return { ok: true, detail: twJson };
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -71,6 +128,7 @@ Deno.serve(async (req) => {
     .select(
       `
       id,
+      event_id,
       seller_id,
       sold_price,
       item_id,
@@ -94,31 +152,43 @@ Deno.serve(async (req) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  let saleBehavior: SaleBehaviorSettings = {
+    notifySellerSmsOnSale: false,
+    notifySellerPushOnSale: true,
+  };
+
+  const { data: evRow } = await service
+    .from('events')
+    .select('organization_id')
+    .eq('id', txn.event_id as string)
+    .maybeSingle();
+
+  const orgId = evRow?.organization_id as string | undefined;
+  if (orgId) {
+    const { data: orgRow } = await service
+      .from('organizations')
+      .select('sale_behavior_settings')
+      .eq('id', orgId)
+      .maybeSingle();
+    const rawSb = orgRow?.sale_behavior_settings;
+    if (rawSb && typeof rawSb === 'object') {
+      saleBehavior = {
+        notifySellerSmsOnSale: Boolean((rawSb as SaleBehaviorSettings).notifySellerSmsOnSale),
+        notifySellerPushOnSale:
+          (rawSb as SaleBehaviorSettings).notifySellerPushOnSale !== false,
+      };
+    }
+  }
+
   const { data: seller, error: sellerErr } = await service
     .from('sellers')
-    .select('expo_push_token')
+    .select('expo_push_token, phone, first_name, last_name')
     .eq('id', txn.seller_id)
     .maybeSingle();
 
   if (sellerErr) {
     return new Response(JSON.stringify({ error: sellerErr.message }), {
       status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  const token = seller?.expo_push_token;
-  if (!token) {
-    return new Response(JSON.stringify({ ok: true, skipped: true, reason: 'no_push_token' }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  if (!expoAccessToken) {
-    console.warn('notify-seller-on-sale: EXPO_ACCESS_TOKEN not set; skipping Expo send');
-    return new Response(JSON.stringify({ ok: true, skipped: true, reason: 'no_expo_access_token' }), {
-      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
@@ -130,40 +200,72 @@ Deno.serve(async (req) => {
   const item = Array.isArray(rawItem) ? rawItem[0] : rawItem;
   const itemNumber = item?.item_number ?? 'Your item';
   const label = item?.seller_item_label?.trim();
-  const title = 'Item sold';
   const soldPrice = typeof txn.sold_price === 'number' ? txn.sold_price : Number(txn.sold_price);
   const priceStr = Number.isFinite(soldPrice) ? soldPrice.toFixed(2) : String(txn.sold_price);
-  const bodyText = label
-    ? `${label} (${itemNumber}) sold for $${priceStr}`
-    : `${itemNumber} sold for $${priceStr}`;
+  const summary = label ? `${label} (${itemNumber}) sold for $${priceStr}` : `${itemNumber} sold for $${priceStr}`;
 
-  const pushRes = await fetch('https://exp.host/--/api/v2/push/send', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'Accept-Encoding': 'gzip, deflate',
-      Authorization: `Bearer ${expoAccessToken}`,
-    },
-    body: JSON.stringify({
-      to: token,
-      title,
-      body: bodyText,
-      data: { transactionId: txn.id, itemId: txn.item_id },
-      sound: 'default',
-    }),
-  });
+  let pushResult: unknown = null;
+  let smsResult: unknown = null;
 
-  const pushJson = await pushRes.json().catch(() => ({}));
-  if (!pushRes.ok) {
-    console.error('Expo push failed', pushRes.status, pushJson);
-    return new Response(JSON.stringify({ error: 'Expo push failed', detail: pushJson }), {
-      status: 502,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+  if (saleBehavior.notifySellerPushOnSale !== false) {
+    const token = seller?.expo_push_token;
+    if (!token) {
+      pushResult = { skipped: true, reason: 'no_push_token' };
+    } else if (!expoAccessToken) {
+      console.warn('notify-seller-on-sale: EXPO_ACCESS_TOKEN not set; skipping Expo send');
+      pushResult = { skipped: true, reason: 'no_expo_access_token' };
+    } else {
+      const title = 'Item sold';
+      const pushRes = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          Authorization: `Bearer ${expoAccessToken}`,
+        },
+        body: JSON.stringify({
+          to: token,
+          title,
+          body: summary,
+          data: { transactionId: txn.id, itemId: txn.item_id },
+          sound: 'default',
+        }),
+      });
+
+      const pushJson = await pushRes.json().catch(() => ({}));
+      if (!pushRes.ok) {
+        console.error('Expo push failed', pushRes.status, pushJson);
+        return new Response(JSON.stringify({ error: 'Expo push failed', detail: pushJson }), {
+          status: 502,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      pushResult = pushJson;
+    }
+  } else {
+    pushResult = { skipped: true, reason: 'notifySellerPushOff' };
   }
 
-  return new Response(JSON.stringify({ ok: true, push: pushJson }), {
+  if (saleBehavior.notifySellerSmsOnSale === true) {
+    const phoneRaw = seller?.phone != null ? String(seller.phone) : '';
+    const to = tryNormalizePhoneE164US(phoneRaw);
+    if (!to) {
+      smsResult = { skipped: true, reason: 'invalid_or_missing_phone' };
+    } else {
+      const bodyText =
+        `GearSwap: sold — ${summary}. Funds will follow your organization's payout schedule. Reply STOP to opt out.`;
+      const tw = await sendTwilioSms(to, bodyText);
+      smsResult = tw.ok ? { ok: true, detail: tw.detail } : { ok: false, detail: tw.detail };
+      if (!tw.ok) {
+        console.error('notify-seller-on-sale: Twilio SMS failed', tw.detail);
+      }
+    }
+  } else {
+    smsResult = { skipped: true, reason: 'notifySellerSmsOff' };
+  }
+
+  return new Response(JSON.stringify({ ok: true, push: pushResult, sms: smsResult }), {
     status: 200,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });

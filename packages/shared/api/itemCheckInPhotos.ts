@@ -69,7 +69,7 @@ export async function uploadItemCheckInPhotoFromUri(
 }
 
 /**
- * Short-lived URL for org clients to display a private check-in photo (e.g. POS verification).
+ * Short-lived URL for a private check-in photo: org stations, or sellers for their own items after `checked_in_at` is set (storage RLS).
  */
 export async function getItemCheckInPhotoSignedUrl(
   storagePath: string | null | undefined,

@@ -136,6 +136,8 @@ const DASHBOARD_ROUTE_TITLES: Record<string, string> = {
   'commission-rates': 'Commission Rates',
   'field-definitions': 'Item Fields',
   'gear-tags': 'Item Tags',
+  'seller-receipts': 'Seller receipts',
+  'sale-settings': 'Sale settings',
   'price-reduction-settings': 'Price Reductions',
   'swap-registration-fields': 'Seller Registration Form',
   'staff-accounts': 'Staff Accounts',

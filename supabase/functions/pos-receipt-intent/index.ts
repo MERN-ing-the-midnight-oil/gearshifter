@@ -71,6 +71,11 @@ async function verifyIntentToken(token: string, secret: string): Promise<string 
   return parsed.intentId;
 }
 
+async function signTransactionReceiptToken(transactionId: string, secret: string): Promise<string> {
+  const sig = await hmacSha256Hex(transactionId, secret);
+  return `${transactionId}.${sig}`;
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -438,7 +443,11 @@ Deno.serve(async (req) => {
       console.warn('pos-receipt-intent: notify-seller-on-sale failed', e);
     }
 
-    return json({ ok: true, transaction: txn });
+    const txnToken = await signTransactionReceiptToken(transactionId, secret);
+    const apiBase = supabaseUrl.replace(/\/$/, '');
+    const buyerReceiptUrl = `${apiBase}/functions/v1/buyer-sale-receipt?t=${encodeURIComponent(txnToken)}`;
+
+    return json({ ok: true, transaction: txn, buyer_receipt_url: buyerReceiptUrl });
   }
 
   // create

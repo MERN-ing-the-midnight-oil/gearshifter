@@ -1,7 +1,9 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth, useAdminOrganization, useAdminUser, updatePriceReductionSettings } from 'shared';
 import { useState, useEffect } from 'react';
+
+type ControlChoice = 'org' | 'seller';
 
 export default function PriceReductionSettingsScreen() {
   const router = useRouter();
@@ -16,21 +18,23 @@ export default function PriceReductionSettingsScreen() {
   }, [adminUser, router]);
 
   const [settings, setSettings] = useState({
-    sellerCanSetReduction: true,
-    sellerCanSetTime: true,
+    priceReductionValueControl: 'seller' as ControlChoice,
+    priceReductionCountControl: 'seller' as ControlChoice,
+    priceReductionTimingControl: 'seller' as ControlChoice,
     defaultReductionTime: '',
     allowedReductionTimes: [] as string[],
   });
 
   useEffect(() => {
-    if (organization) {
-      setSettings({
-        sellerCanSetReduction: organization.priceReductionSettings.sellerCanSetReduction,
-        sellerCanSetTime: organization.priceReductionSettings.sellerCanSetTime,
-        defaultReductionTime: organization.priceReductionSettings.defaultReductionTime || '',
-        allowedReductionTimes: organization.priceReductionSettings.allowedReductionTimes || [],
-      });
-    }
+    if (!organization) return;
+    const prs = organization.priceReductionSettings;
+    setSettings({
+      priceReductionValueControl: prs.priceReductionValueControl ?? (prs.sellerCanSetReduction ? 'seller' : 'org'),
+      priceReductionCountControl: prs.priceReductionCountControl ?? 'seller',
+      priceReductionTimingControl: prs.priceReductionTimingControl ?? (prs.sellerCanSetTime ? 'seller' : 'org'),
+      defaultReductionTime: prs.defaultReductionTime || '',
+      allowedReductionTimes: prs.allowedReductionTimes || [],
+    });
   }, [organization]);
 
   const handleSave = async () => {
@@ -39,8 +43,13 @@ export default function PriceReductionSettingsScreen() {
     setSaving(true);
     try {
       await updatePriceReductionSettings(organization.id, {
-        sellerCanSetReduction: settings.sellerCanSetReduction,
-        sellerCanSetTime: settings.sellerCanSetTime,
+        priceReductionValueControl: settings.priceReductionValueControl,
+        priceReductionCountControl: settings.priceReductionCountControl,
+        priceReductionTimingControl: settings.priceReductionTimingControl,
+        sellerCanSetReduction: settings.priceReductionValueControl === 'seller',
+        sellerCanSetTime:
+          settings.priceReductionTimingControl === 'seller' &&
+          settings.priceReductionCountControl === 'seller',
         defaultReductionTime: settings.defaultReductionTime || undefined,
         allowedReductionTimes: settings.allowedReductionTimes,
       });
@@ -96,6 +105,20 @@ export default function PriceReductionSettingsScreen() {
     );
   }
 
+  const renderChoice = (
+    value: ControlChoice,
+    current: ControlChoice,
+    setCurrent: (choice: ControlChoice) => void,
+    label: string
+  ) => (
+    <TouchableOpacity
+      style={[styles.radioOption, current === value && styles.radioOptionSelected]}
+      onPress={() => setCurrent(value)}
+    >
+      <Text style={[styles.radioText, current === value && styles.radioTextSelected]}>{label}</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -111,45 +134,68 @@ export default function PriceReductionSettingsScreen() {
       <ScrollView style={styles.content}>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Control Settings</Text>
-          
+
           <View style={styles.settingCard}>
-            <View style={styles.switchRow}>
-              <View style={styles.switchLabelContainer}>
-                <Text style={styles.label}>Sellers Can Set Price Reductions</Text>
-                <Text style={styles.helpText}>
-                  Allow sellers to enable price reductions on their items
-                </Text>
-              </View>
-              <Switch
-                value={settings.sellerCanSetReduction}
-                onValueChange={(value) => setSettings({ ...settings, sellerCanSetReduction: value })}
-              />
+            <Text style={styles.label}>Type and amount</Text>
+            <Text style={styles.helpText}>Who decides percent/flat and the reduction value.</Text>
+            <View style={styles.radioGroup}>
+              {renderChoice(
+                'org',
+                settings.priceReductionValueControl,
+                (choice) => setSettings({ ...settings, priceReductionValueControl: choice }),
+                'Org sets the price reduction by percent or flat amount'
+              )}
+              {renderChoice(
+                'seller',
+                settings.priceReductionValueControl,
+                (choice) => setSettings({ ...settings, priceReductionValueControl: choice }),
+                'Seller sets the price reduction by percent or flat amount'
+              )}
             </View>
           </View>
 
-          {settings.sellerCanSetReduction && (
-            <View style={styles.settingCard}>
-              <View style={styles.switchRow}>
-                <View style={styles.switchLabelContainer}>
-                  <Text style={styles.label}>Sellers Can Set Reduction Time</Text>
-                  <Text style={styles.helpText}>
-                    Allow sellers to choose when price reduction occurs
-                  </Text>
-                </View>
-                <Switch
-                  value={settings.sellerCanSetTime}
-                  onValueChange={(value) => setSettings({ ...settings, sellerCanSetTime: value })}
-                />
-              </View>
+          <View style={styles.settingCard}>
+            <Text style={styles.label}>Number of reductions</Text>
+            <Text style={styles.helpText}>Who decides how many reductions are configured.</Text>
+            <View style={styles.radioGroup}>
+              {renderChoice(
+                'org',
+                settings.priceReductionCountControl,
+                (choice) => setSettings({ ...settings, priceReductionCountControl: choice }),
+                'Org sets the number of price reductions'
+              )}
+              {renderChoice(
+                'seller',
+                settings.priceReductionCountControl,
+                (choice) => setSettings({ ...settings, priceReductionCountControl: choice }),
+                'Seller sets the number of price reductions and timing'
+              )}
             </View>
-          )}
+          </View>
 
-          {settings.sellerCanSetReduction && !settings.sellerCanSetTime && (
+          <View style={styles.settingCard}>
+            <Text style={styles.label}>Timing control</Text>
+            <Text style={styles.helpText}>Who chooses when reductions happen.</Text>
+            <View style={styles.radioGroup}>
+              {renderChoice(
+                'org',
+                settings.priceReductionTimingControl,
+                (choice) => setSettings({ ...settings, priceReductionTimingControl: choice }),
+                'Organization sets timing'
+              )}
+              {renderChoice(
+                'seller',
+                settings.priceReductionTimingControl,
+                (choice) => setSettings({ ...settings, priceReductionTimingControl: choice }),
+                'Seller sets timing'
+              )}
+            </View>
+          </View>
+
+          {settings.priceReductionTimingControl === 'org' ? (
             <View style={styles.settingCard}>
               <Text style={styles.label}>Default Reduction Time</Text>
-              <Text style={styles.helpText}>
-                Time when price reductions occur (HH:MM format, e.g., 16:00)
-              </Text>
+              <Text style={styles.helpText}>Time when reductions occur (HH:MM format, e.g., 16:00).</Text>
               <TextInput
                 style={styles.textInput}
                 value={settings.defaultReductionTime}
@@ -158,9 +204,9 @@ export default function PriceReductionSettingsScreen() {
                 keyboardType="default"
               />
             </View>
-          )}
+          ) : null}
 
-          {settings.sellerCanSetReduction && settings.sellerCanSetTime && (
+          {settings.priceReductionTimingControl === 'seller' ? (
             <View style={styles.settingCard}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.label}>Allowed Reduction Times</Text>
@@ -169,17 +215,14 @@ export default function PriceReductionSettingsScreen() {
                 </TouchableOpacity>
               </View>
               <Text style={styles.helpText}>
-                Times sellers can choose from (leave empty to allow any time)
+                Times sellers can choose from (leave empty to allow any time).
               </Text>
               {settings.allowedReductionTimes.length > 0 ? (
                 <View style={styles.timesList}>
                   {settings.allowedReductionTimes.map((time) => (
                     <View key={time} style={styles.timeChip}>
                       <Text style={styles.timeChipText}>{time}</Text>
-                      <TouchableOpacity
-                        onPress={() => removeAllowedTime(time)}
-                        style={styles.removeTimeButton}
-                      >
+                      <TouchableOpacity onPress={() => removeAllowedTime(time)} style={styles.removeTimeButton}>
                         <Text style={styles.removeTimeButtonText}>×</Text>
                       </TouchableOpacity>
                     </View>
@@ -189,16 +232,16 @@ export default function PriceReductionSettingsScreen() {
                 <Text style={styles.emptyText}>No restrictions - sellers can choose any time</Text>
               )}
             </View>
-          )}
+          ) : null}
         </View>
 
         <View style={styles.infoBox}>
           <Text style={styles.infoTitle}>How It Works</Text>
           <Text style={styles.infoText}>
-            • If sellers can set reductions: Sellers can enable price reductions when adding items{'\n'}
-            • If sellers can set time: Sellers choose when reduction occurs{'\n'}
-            • If org controls time: All reductions happen at the default time{'\n'}
-            • Allowed times: Restrict sellers to specific times (optional){'\n'}
+            • Type and amount: choose whether org or seller controls percent/flat and value{'\n'}
+            • Number of reductions: choose whether org or seller controls how many reductions apply{'\n'}
+            • Timing control: choose whether org or seller sets reduction times{'\n'}
+            • Allowed times: when seller timing is enabled, optionally restrict selectable times{'\n'}
             • Price reduction info will appear on item tags
           </Text>
         </View>
@@ -279,14 +322,29 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  switchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  radioGroup: {
+    marginTop: 8,
+    gap: 10,
   },
-  switchLabelContainer: {
-    flex: 1,
-    marginRight: 12,
+  radioOption: {
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#F9FBFD',
+  },
+  radioOptionSelected: {
+    borderColor: '#007AFF',
+    backgroundColor: '#EAF3FF',
+  },
+  radioText: {
+    fontSize: 14,
+    color: '#334155',
+  },
+  radioTextSelected: {
+    color: '#0B5ED7',
+    fontWeight: '600',
   },
   label: {
     fontSize: 16,

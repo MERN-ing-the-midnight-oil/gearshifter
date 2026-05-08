@@ -10,6 +10,7 @@ import {
   Image,
   Modal,
 } from 'react-native';
+import { CheckCircle2, Eraser, QrCode, ScanLine, XCircle } from 'lucide-react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState, useEffect } from 'react';
@@ -22,12 +23,35 @@ import {
   createPosReceiptIntent,
   completePosReceiptIntent,
   cancelPosReceiptIntent,
+  getSellerById,
+  getDefaultSellerReceiptTemplate,
+  getSellerReceiptTemplate,
+  STAFF_FLOW_CONTENT_MAX_WIDTH,
+  STAFF_MOBILE_EDGE_PADDING,
+  STAFF_MOBILE_HEADER_PADDING_TOP,
+  STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   getItemCheckInPhotoSignedUrl,
   normalizePhoneE164US,
+  STATION_THEME,
   type Item,
+  type SellerReceiptTemplate,
+  type Organization,
+  type PosSaleCompletionResult,
 } from 'shared';
+import { printerService } from '../../../hardware/printer';
+import { printSellerSaleReceipt } from '../../../hardware/sellerReceiptPrinter';
+
+async function resolveSellerReceiptTemplate(org: Organization): Promise<SellerReceiptTemplate | null> {
+  const picked = org.saleBehaviorSettings.defaultSellerReceiptTemplateId;
+  if (picked) {
+    const t = await getSellerReceiptTemplate(picked);
+    if (t?.isActive) return t;
+  }
+  return getDefaultSellerReceiptTemplate(org.id);
+}
 
 export default function POSScreen() {
+  const stationTheme = STATION_THEME.pos;
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
   const { event, loading: eventLoading } = useEvent(eventId);
   const router = useRouter();
@@ -67,6 +91,49 @@ export default function POSScreen() {
       cancelled = true;
     };
   }, [selectedItem?.id, selectedItem?.checkInPhotoStoragePath]);
+
+  const printSellerSlip = async (sale: PosSaleCompletionResult, item: Item) => {
+    const org = event?.organization;
+    if (!org) {
+      Alert.alert('Cannot print', 'Event details are still loading.');
+      return;
+    }
+    const st = printerService.getStatus();
+    if (!st.isConnected) {
+      Alert.alert(
+        'Printer not connected',
+        st.error ||
+          'Connect a Bluetooth thermal printer from Stations (same flow as item tags), then try printing again.'
+      );
+      return;
+    }
+    try {
+      const tmpl = await resolveSellerReceiptTemplate(org);
+      if (!tmpl) {
+        Alert.alert(
+          'No template',
+          'Add seller receipt templates under Org dashboard, or set a default under Sale settings.'
+        );
+        return;
+      }
+      const seller = await getSellerById(sale.transaction.sellerId);
+      const sellerDisplayName = seller ? `${seller.firstName} ${seller.lastName}`.trim() || null : null;
+      const ok = await printSellerSaleReceipt({
+        template: tmpl,
+        item,
+        transaction: sale.transaction,
+        event,
+        sellerDisplayName,
+        buyerReceiptUrl: sale.buyerReceiptUrl ?? undefined,
+      });
+      if (!ok) {
+        const er = printerService.getStatus().error || 'Print failed';
+        Alert.alert('Print failed', er);
+      }
+    } catch (e) {
+      Alert.alert('Print failed', e instanceof Error ? e.message : 'Unknown error');
+    }
+  };
 
   const handleScanItem = async () => {
     if (!qrCodeInput.trim()) {
@@ -160,24 +227,35 @@ export default function POSScreen() {
 
     setSubmitting(true);
     try {
-      await completePosSaleWithBuyerReceipt({
+      const saleResult = await completePosSaleWithBuyerReceipt({
         itemId: selectedItem.id,
         soldPrice: price,
         buyerName: buyerName.trim(),
         buyerEmail: buyerEmail.trim() || undefined,
         buyerPhone: buyerPhoneE164,
       });
+      const slipItem = selectedItem;
 
       Alert.alert(
         'Sale recorded',
-        `Item ${selectedItem.itemNumber} is marked sold for $${price.toFixed(
+        `Item ${slipItem.itemNumber} is marked sold for $${price.toFixed(
           2
         )}. The buyer should receive a text receipt momentarily; the sale only completes after our provider accepts that message. The receipt includes a QR exit staff can scan to see check-in photos.`,
         [
           {
+            text: 'Print seller receipt',
+            onPress: () => {
+              void printSellerSlip(saleResult, slipItem);
+              setSelectedItem(null);
+              setBuyerName('');
+              setBuyerEmail('');
+              setBuyerPhone('');
+              setSalePrice('');
+            },
+          },
+          {
             text: 'OK',
             onPress: () => {
-              // Reset form
               setSelectedItem(null);
               setBuyerName('');
               setBuyerEmail('');
@@ -248,12 +326,26 @@ export default function POSScreen() {
     if (!qrIntentToken) return;
     setSubmitting(true);
     try {
-      await completePosReceiptIntent(qrIntentToken);
+      const saleResult = await completePosReceiptIntent(qrIntentToken);
+      const slipItem = selectedItem;
       resetQrHandoff();
       Alert.alert(
         'Sale recorded',
         `Item ${selectedItem?.itemNumber ?? ''} is marked sold. The buyer should have a photo of the receipt QR or the preview page.`,
         [
+          {
+            text: 'Print seller receipt',
+            onPress: () => {
+              if (slipItem) void printSellerSlip(saleResult, slipItem);
+              resetQrHandoff();
+              setSelectedItem(null);
+              setBuyerName('');
+              setBuyerEmail('');
+              setBuyerPhone('');
+              setSalePrice('');
+              setQrCodeInput('');
+            },
+          },
           {
             text: 'OK',
             onPress: () => {
@@ -314,8 +406,8 @@ export default function POSScreen() {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Event not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Go Back</Text>
+        <TouchableOpacity style={styles.errorScreenButton} onPress={() => router.back()}>
+          <Text style={styles.errorScreenButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -323,8 +415,8 @@ export default function POSScreen() {
 
   return (
     <>
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
+    <ScrollView style={[styles.container, { backgroundColor: stationTheme.backgroundTint }]}>
+      <View style={[styles.header, { backgroundColor: stationTheme.headerTint, borderBottomColor: stationTheme.headerAccent }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
@@ -356,7 +448,10 @@ export default function POSScreen() {
           {loadingItem ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.scanButtonText}>Load Item</Text>
+            <View style={styles.buttonContent}>
+              <ScanLine size={18} color="#FFFFFF" />
+              <Text style={styles.scanButtonText}>Load Item</Text>
+            </View>
           )}
         </TouchableOpacity>
 
@@ -543,7 +638,10 @@ export default function POSScreen() {
               onPress={handleClear}
               disabled={submitting}
             >
-              <Text style={styles.cancelButtonText}>Clear</Text>
+              <View style={styles.buttonContent}>
+                <Eraser size={18} color="#1A1A1A" />
+                <Text style={styles.cancelButtonText}>Clear</Text>
+              </View>
             </TouchableOpacity>
 
             {receiptMode === 'sms' ? (
@@ -555,7 +653,10 @@ export default function POSScreen() {
                 {submitting ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.submitButtonText}>Record sale (text receipt)</Text>
+                  <View style={styles.buttonContent}>
+                    <CheckCircle2 size={18} color="#FFFFFF" />
+                    <Text style={styles.submitButtonText}>Record sale (text receipt)</Text>
+                  </View>
                 )}
               </TouchableOpacity>
             ) : (
@@ -567,7 +668,10 @@ export default function POSScreen() {
                 {submitting ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.submitButtonText}>Show receipt QR</Text>
+                  <View style={styles.buttonContent}>
+                    <QrCode size={18} color="#FFFFFF" />
+                    <Text style={styles.submitButtonText}>Show receipt QR</Text>
+                  </View>
                 )}
               </TouchableOpacity>
             )}
@@ -596,11 +700,17 @@ export default function POSScreen() {
               {submitting ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.submitButtonText}>Receipt received — complete sale</Text>
+                <View style={styles.buttonContent}>
+                  <CheckCircle2 size={18} color="#FFFFFF" />
+                  <Text style={styles.submitButtonText}>Receipt received — complete sale</Text>
+                </View>
               )}
             </TouchableOpacity>
             <TouchableOpacity style={[styles.button, styles.modalSecondary]} onPress={handleCancelQrHandoff} disabled={submitting}>
-              <Text style={styles.modalSecondaryText}>Cancel handoff</Text>
+              <View style={styles.buttonContent}>
+                <XCircle size={18} color="#555555" />
+                <Text style={styles.modalSecondaryText}>Cancel handoff</Text>
+              </View>
             </TouchableOpacity>
           </View>
         </View>
@@ -618,15 +728,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   loadingText: {
     marginTop: 10,
     color: '#666',
   },
   header: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_HEADER_PADDING_TOP,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
@@ -650,7 +761,9 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   scanSection: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 8,
   },
   sectionTitle: {
     fontSize: 20,
@@ -666,18 +779,25 @@ const styles = StyleSheet.create({
   qrInput: {
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
-    padding: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#E5E5E5',
     marginBottom: 16,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   scanButton: {
     backgroundColor: '#007AFF',
     borderRadius: 12,
-    padding: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
     marginBottom: 12,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   scanButtonText: {
     color: '#FFFFFF',
@@ -690,9 +810,16 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
   },
+  buttonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
   saleSection: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
     paddingTop: 0,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 24,
   },
   itemCard: {
     backgroundColor: '#FFFFFF',
@@ -846,11 +973,13 @@ const styles = StyleSheet.create({
   },
   modePill: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     borderRadius: 10,
     backgroundColor: '#E8E8E8',
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   modePillActive: {
     backgroundColor: '#007AFF',
@@ -869,17 +998,66 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     lineHeight: 18,
   },
+  textInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+    width: '100%',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
+  },
+  button: {
+    flex: 1,
+    flexBasis: '45%',
+    minWidth: '42%',
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+  },
+  cancelButton: {
+    backgroundColor: '#E5E5E5',
+  },
+  cancelButtonText: {
+    color: '#1A1A1A',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  submitButton: {
+    backgroundColor: '#28A745',
+  },
+  submitButtonDisabled: {
+    opacity: 0.5,
+  },
+  submitButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'center',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
-    padding: 20,
-    maxWidth: 400,
+    padding: STAFF_MOBILE_EDGE_PADDING + 4,
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
     alignSelf: 'center',
     width: '100%',
   },
@@ -915,60 +1093,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#555',
   },
-  textInput: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#E5E5E5',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  button: {
-    flex: 1,
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#E5E5E5',
-  },
-  cancelButtonText: {
-    color: '#1A1A1A',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  submitButton: {
-    backgroundColor: '#28A745',
-  },
-  submitButtonDisabled: {
-    opacity: 0.5,
-  },
-  submitButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  backButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    marginTop: 20,
-  },
-  backButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
   errorText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#DC3545',
     marginBottom: 20,
+    textAlign: 'center',
+  },
+  errorScreenButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorScreenButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

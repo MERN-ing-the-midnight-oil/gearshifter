@@ -56,6 +56,15 @@ verify_jwt = false
 [functions.pos-complete-sale]
 verify_jwt = true
 
+[functions.notify-seller-on-check-in]
+verify_jwt = true
+
+# Validates organizer JWT in function code; sends seller SMS OTP via anon Auth client.
+# Deploy with JWT verification OFF so browser OPTIONS preflight succeeds (Expo Web / localhost).
+#   supabase functions deploy send-seller-check-in-sms --no-verify-jwt
+[functions.send-seller-check-in-sms]
+verify_jwt = false
+
 # Public GET (?t=) for QR handoff preview; POST validates JWT in function code.
 [functions.pos-receipt-intent]
 verify_jwt = false

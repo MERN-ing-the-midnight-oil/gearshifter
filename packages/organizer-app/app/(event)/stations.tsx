@@ -33,7 +33,7 @@ export default function StationsScreen() {
   const canReports = isAdmin;
 
   const stations = [
-    canCheckIn && { id: 'check-in', title: 'Check-in', subtitle: 'Register sellers and check in items', icon: '📋', path: `/(event)/check-in?id=${eventId}` },
+    canCheckIn && { id: 'check-in', title: 'Check-in', subtitle: 'Register sellers, look up sellers, and check in items', icon: '📋', path: `/(event)/check-in?id=${eventId}` },
     canPos && { id: 'pos', title: 'POS', subtitle: 'Ring up sales and record transactions', icon: '💳', path: `/(event)/pos/index?id=${eventId}` },
     canPickup && { id: 'pickup', title: 'Pickup', subtitle: 'Seller pickup and payout', icon: '📦', path: `/(event)/pickup/index?id=${eventId}` },
     canReports && { id: 'reports', title: 'Reports', subtitle: 'View reports and export data', icon: '📊', path: `/(event)/reports/index?id=${eventId}` },

@@ -160,13 +160,19 @@ export const recordSale = async (
  * Organizer POS: record sale only after Twilio accepts the buyer receipt SMS (Edge `pos-complete-sale`).
  * Requires buyer phone; rolls back the sale if the receipt text cannot be sent.
  */
+/** Result of POS finalize (SMS path); includes buyer digital receipt URL for seller thermal receipt QR when configured. */
+export type PosSaleCompletionResult = {
+  transaction: Transaction;
+  buyerReceiptUrl: string | null;
+};
+
 export const completePosSaleWithBuyerReceipt = async (args: {
   itemId: string;
   soldPrice: number;
   buyerName: string;
   buyerEmail?: string;
   buyerPhone: string;
-}): Promise<Transaction> => {
+}): Promise<PosSaleCompletionResult> => {
   const { data, error } = await supabase.functions.invoke('pos-complete-sale', {
     body: {
       item_id: args.itemId,
@@ -181,12 +187,25 @@ export const completePosSaleWithBuyerReceipt = async (args: {
     throw new Error(error.message);
   }
 
-  const payload = data as { ok?: boolean; error?: string; transaction?: Record<string, unknown> } | null;
+  const payload = data as {
+    ok?: boolean;
+    error?: string;
+    transaction?: Record<string, unknown>;
+    buyer_receipt_url?: string | null;
+  } | null;
   if (!payload || payload.ok !== true || !payload.transaction) {
     throw new Error(payload?.error || 'Sale could not be completed.');
   }
 
-  return mapTransactionFromDb(payload.transaction);
+  const buyerReceiptUrl =
+    typeof payload.buyer_receipt_url === 'string' && payload.buyer_receipt_url.trim()
+      ? payload.buyer_receipt_url.trim()
+      : null;
+
+  return {
+    transaction: mapTransactionFromDb(payload.transaction),
+    buyerReceiptUrl,
+  };
 };
 
 /** QR handoff: volunteer shows receipt URL as QR; buyer photographs; volunteer completes when ready (`pos-receipt-intent`). */
@@ -231,7 +250,7 @@ export const createPosReceiptIntent = async (args: {
   };
 };
 
-export const completePosReceiptIntent = async (intentToken: string): Promise<Transaction> => {
+export const completePosReceiptIntent = async (intentToken: string): Promise<PosSaleCompletionResult> => {
   const { data, error } = await supabase.functions.invoke('pos-receipt-intent', {
     body: { action: 'complete', intent_token: intentToken },
   });
@@ -240,12 +259,25 @@ export const completePosReceiptIntent = async (intentToken: string): Promise<Tra
     throw new Error(error.message);
   }
 
-  const payload = data as { ok?: boolean; error?: string; transaction?: Record<string, unknown> } | null;
+  const payload = data as {
+    ok?: boolean;
+    error?: string;
+    transaction?: Record<string, unknown>;
+    buyer_receipt_url?: string | null;
+  } | null;
   if (!payload || payload.ok !== true || !payload.transaction) {
     throw new Error(payload?.error || 'Could not complete sale.');
   }
 
-  return mapTransactionFromDb(payload.transaction);
+  const buyerReceiptUrl =
+    typeof payload.buyer_receipt_url === 'string' && payload.buyer_receipt_url.trim()
+      ? payload.buyer_receipt_url.trim()
+      : null;
+
+  return {
+    transaction: mapTransactionFromDb(payload.transaction),
+    buyerReceiptUrl,
+  };
 };
 
 export const cancelPosReceiptIntent = async (intentToken: string): Promise<void> => {

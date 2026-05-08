@@ -2,6 +2,8 @@
 // without Twilio. Allowed only when:
 //   - SUPABASE_URL looks local (127.0.0.1 / localhost), e.g. `supabase start`, OR
 //   - Edge secret ALLOW_DEV_PHONE_BYPASS=true (set in Dashboard for hosted dev/staging only).
+// Optional body `check_in_event_id` (UUID): merged into `user_metadata` for organizer-initiated check-in
+// (same flow whether the seller taps SKIP VERIFICATION or staff triggers dev simulate via send-seller-check-in-sms).
 // Turn off ALLOW_DEV_PHONE_BYPASS and/or remove this function in production.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -70,6 +72,10 @@ async function findUserIdByPhone(
   return null;
 }
 
+function isUuid(v: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v.trim());
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -92,7 +98,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  let bodyIn: { phone?: string };
+  let bodyIn: { phone?: string; check_in_event_id?: string };
   try {
     bodyIn = await req.json();
   } catch {
@@ -100,6 +106,8 @@ Deno.serve(async (req) => {
   }
 
   const phone = typeof bodyIn.phone === 'string' ? bodyIn.phone.trim() : '';
+  const checkInEventIdRaw = typeof bodyIn.check_in_event_id === 'string' ? bodyIn.check_in_event_id.trim() : '';
+  const checkInEventId = isUuid(checkInEventIdRaw) ? checkInEventIdRaw : '';
   if (!isPlausibleE164(phone)) {
     return json(400, { error: 'Invalid phone (expected E.164, e.g. +15551234567)' });
   }
@@ -119,12 +127,19 @@ Deno.serve(async (req) => {
   const existingId = await findUserIdByPhone(admin, targetDigits);
   if (existingId) {
     signInEmail = syntheticEmailForUserId(existingId);
+    const { data: before, error: beforeErr } = await admin.auth.admin.getUserById(existingId);
+    const prevMeta = (!beforeErr && before?.user?.user_metadata
+      ? (before.user.user_metadata as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+    const user_metadata = checkInEventId ? { ...prevMeta, check_in_event_id: checkInEventId } : undefined;
+
     const { error: upErr } = await admin.auth.admin.updateUserById(existingId, {
       email: signInEmail,
       password,
       email_confirm: true,
       phone_confirm: true,
       phone,
+      ...(user_metadata ? { user_metadata } : {}),
     });
     if (upErr) {
       console.error('dev-phone-session-bypass: updateUserById', upErr);
@@ -132,12 +147,14 @@ Deno.serve(async (req) => {
     }
   } else {
     signInEmail = `phone-bypass-new-${targetDigits}@invalid.local`;
+    const user_metadata = checkInEventId ? { check_in_event_id: checkInEventId } : undefined;
     const { data: created, error: crErr } = await admin.auth.admin.createUser({
       email: signInEmail,
       password,
       phone,
       phone_confirm: true,
       email_confirm: true,
+      ...(user_metadata ? { user_metadata } : {}),
     });
     if (crErr) {
       console.error('dev-phone-session-bypass: createUser', crErr);

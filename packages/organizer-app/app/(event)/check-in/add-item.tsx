@@ -12,10 +12,12 @@ import {
 import {
   useEvent,
   createItem,
-  updateItemStatus,
   getEventFieldDefinitions,
   getEventItemCategoryTree,
   isUuidString,
+  STAFF_MOBILE_EDGE_PADDING,
+  STAFF_MOBILE_HEADER_PADDING_TOP,
+  STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   type ItemFieldDefinition,
   type ItemCategory,
 } from 'shared';
@@ -32,8 +34,6 @@ export default function CheckInAddItemScreen() {
   const [loadingFields, setLoadingFields] = useState(true);
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
-  /** When true (default), item is moved to registered (`checked_in`) in one step; when false, stays pre-registered (`pending`). */
-  const [registerAtCheckIn, setRegisterAtCheckIn] = useState(true);
 
   useEffect(() => {
     if (event) {
@@ -99,7 +99,19 @@ export default function CheckInAddItemScreen() {
     }
 
     const priceReductionField = fieldDefinitions.find((f) => f.isPriceReductionField);
+    const priceSettings = event?.organization?.priceReductionSettings;
+    const sellerCanSetReductionAmount =
+      (priceSettings?.priceReductionValueControl ?? (priceSettings?.sellerCanSetReduction ? 'seller' : 'org')) ===
+      'seller';
+    const sellerCanSetReductionTiming =
+      (priceSettings?.priceReductionTimingControl ?? (priceSettings?.sellerCanSetTime ? 'seller' : 'org')) ===
+        'seller' &&
+      (priceSettings?.priceReductionCountControl ?? 'seller') === 'seller';
     if (priceReductionField && formData[priceReductionField.name]) {
+      if (!sellerCanSetReductionAmount) {
+        Alert.alert('Error', 'Price reduction amount is controlled by the organization.');
+        return;
+      }
       const reductionValue = parseFloat(String(formData[priceReductionField.name] || ''));
       if (priceReductionField.priceReductionPercentage) {
         if (reductionValue <= 0 || reductionValue >= 100) {
@@ -145,7 +157,11 @@ export default function CheckInAddItemScreen() {
         } else if (field.isPriceReductionField) {
           legacyData.reducedPrice = parseFloat(String(value || 0));
           legacyData.enablePriceReduction = !!value;
-          if (field.priceReductionTimeControl === 'seller' && formData[`${field.name}_time`]) {
+          if (
+            field.priceReductionTimeControl === 'seller' &&
+            sellerCanSetReductionTiming &&
+            formData[`${field.name}_time`]
+          ) {
             const reductionTime = formData[`${field.name}_time`] as string;
             if (!legacyData.priceReductionTimes) {
               legacyData.priceReductionTimes = [];
@@ -155,7 +171,7 @@ export default function CheckInAddItemScreen() {
               price: parseFloat(String(value || 0)),
               isPercentage: field.priceReductionPercentage,
             });
-          } else if (event?.organization && !event.organization.priceReductionSettings.sellerCanSetTime) {
+          } else if (event?.organization && !sellerCanSetReductionTiming) {
             const defaultTime = event.organization.priceReductionSettings.defaultReductionTime;
             if (defaultTime && value) {
               if (!legacyData.priceReductionTimes) {
@@ -183,29 +199,19 @@ export default function CheckInAddItemScreen() {
         customFields: customFields as Record<string, unknown>,
       });
 
-      if (registerAtCheckIn) {
-        await updateItemStatus(created.id, 'checked_in', { checkedInAt: new Date() });
-      }
-
-      const successBody = registerAtCheckIn
-        ? 'The item is registered at check-in. You can print a label from item details if needed.'
-        : 'The item is saved as pre-registered. Open it from the seller list when they hand in the gear to register it.';
-
-      Alert.alert('Success', successBody, [
-        {
-          text: 'Add Another',
-          onPress: () => {
-            const initialData: Record<string, unknown> = {};
-            fieldDefinitions.forEach((field) => {
-              if (field.defaultValue) initialData[field.name] = field.defaultValue;
-              else if (field.fieldType === 'boolean') initialData[field.name] = false;
-              else initialData[field.name] = '';
-            });
-            setFormData(initialData);
+      Alert.alert(
+        'Item created',
+        'Next: take a check-in photo or write a handoff description, then tap Register item.',
+        [
+          {
+            text: 'Continue to receive',
+            onPress: () =>
+              router.replace(
+                `/(event)/check-in/item-details?itemId=${created.id}&sellerId=${sellerId}&eventId=${event.id}`
+              ),
           },
-        },
-        { text: 'Back to seller', onPress: () => router.back() },
-      ]);
+        ]
+      );
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Failed to add item');
     } finally {
@@ -219,7 +225,10 @@ export default function CheckInAddItemScreen() {
 
     if (field.isPriceReductionField && event?.organization) {
       const priceSettings = event.organization.priceReductionSettings;
-      if (!priceSettings.sellerCanSetReduction) return null;
+      const sellerCanSetReductionAmount =
+        (priceSettings.priceReductionValueControl ?? (priceSettings.sellerCanSetReduction ? 'seller' : 'org')) ===
+        'seller';
+      if (!sellerCanSetReductionAmount) return null;
     }
 
     switch (field.fieldType) {
@@ -326,7 +335,11 @@ export default function CheckInAddItemScreen() {
       case 'time':
         if (field.isPriceReductionField && event?.organization) {
           const priceSettings = event.organization.priceReductionSettings;
-          if (!priceSettings.sellerCanSetTime) {
+          const sellerCanSetReductionTiming =
+            (priceSettings.priceReductionTimingControl ?? (priceSettings.sellerCanSetTime ? 'seller' : 'org')) ===
+              'seller' &&
+            (priceSettings.priceReductionCountControl ?? 'seller') === 'seller';
+          if (!sellerCanSetReductionTiming) {
             return (
               <View key={field.id} style={styles.field}>
                 <Text style={styles.label}>{field.label} {isRequired && <Text style={styles.required}>*</Text>}</Text>
@@ -426,8 +439,8 @@ export default function CheckInAddItemScreen() {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Event or seller not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Go Back</Text>
+        <TouchableOpacity style={styles.errorScreenButton} onPress={() => router.back()}>
+          <Text style={styles.errorScreenButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -447,26 +460,6 @@ export default function CheckInAddItemScreen() {
         {fieldDefinitions
           .filter((f) => f.name !== 'category' && f.name !== 'category_id')
           .map((field) => renderField(field))}
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            Turn off &quot;Register at check-in&quot; only if the seller is entering details now but dropping off gear later
-            (saves as pre-registered).
-          </Text>
-        </View>
-        <View style={styles.switchRow}>
-          <View style={styles.switchLabelContainer}>
-            <Text style={styles.label}>Register at check-in</Text>
-            <Text style={styles.helpText}>
-              On: create + register in one step. Off: pre-register only; register when they hand in the item.
-            </Text>
-          </View>
-          <Switch
-            value={registerAtCheckIn}
-            onValueChange={setRegisterAtCheckIn}
-            trackColor={{ false: '#E5E5E5', true: '#007AFF' }}
-            thumbColor={registerAtCheckIn ? '#FFFFFF' : '#F4F3F4'}
-          />
-        </View>
         <TouchableOpacity
           style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
           onPress={handleSubmit}
@@ -475,7 +468,7 @@ export default function CheckInAddItemScreen() {
           {submitting ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.submitButtonText}>{registerAtCheckIn ? 'Add & register item' : 'Add item (pre-register)'}</Text>
+            <Text style={styles.submitButtonText}>Add item — continue to receive</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -490,12 +483,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#F5F5F5',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   loadingText: { marginTop: 10, color: '#666' },
   header: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_HEADER_PADDING_TOP,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
@@ -504,19 +498,25 @@ const styles = StyleSheet.create({
   backLinkText: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
   title: { fontSize: 28, fontWeight: 'bold', color: '#1A1A1A', marginBottom: 4 },
   subtitle: { fontSize: 16, color: '#666' },
-  form: { padding: 20 },
+  form: {
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 24,
+  },
   field: { marginBottom: 24 },
   label: { fontSize: 16, fontWeight: '600', color: '#1A1A1A', marginBottom: 8 },
   required: { color: '#DC3545' },
   textInput: {
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#E5E5E5',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
-  textArea: { minHeight: 100 },
+  textArea: { minHeight: 120 },
   priceInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -565,12 +565,28 @@ const styles = StyleSheet.create({
     borderColor: '#E5E5E5',
   },
   readOnlyText: { fontSize: 16, color: '#666', fontStyle: 'italic' },
-  infoBox: { backgroundColor: '#E3F2FD', borderRadius: 8, padding: 12, marginBottom: 24 },
-  infoText: { fontSize: 14, color: '#1976D2' },
-  submitButton: { backgroundColor: '#007AFF', borderRadius: 12, padding: 18, alignItems: 'center', marginTop: 8 },
+  submitButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginTop: 8,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+  },
   submitButtonDisabled: { opacity: 0.6 },
   submitButtonText: { color: '#FFFFFF', fontSize: 18, fontWeight: '600' },
-  errorText: { fontSize: 18, fontWeight: '600', color: '#DC3545', marginBottom: 20 },
-  backButton: { backgroundColor: '#007AFF', borderRadius: 8, paddingHorizontal: 24, paddingVertical: 12 },
-  backButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  errorText: { fontSize: 18, fontWeight: '600', color: '#DC3545', marginBottom: 20, textAlign: 'center' },
+  errorScreenButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorScreenButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 });

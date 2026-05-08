@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
+import { SellerItemCheckInDoc } from '../../components/SellerItemCheckInDoc';
 import {
   useAuth,
   useItemsByEvent,
@@ -157,6 +158,7 @@ export default function ItemsScreen() {
               </View>
             </View>
             <Text style={styles.meta}>#{item.itemNumber}</Text>
+            <SellerItemCheckInDoc item={item} />
             <View style={styles.footer}>
               {item.status === 'pending' ? (
                 <View style={styles.pendingActions}>

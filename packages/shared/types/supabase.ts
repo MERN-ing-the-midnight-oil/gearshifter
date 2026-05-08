@@ -221,6 +221,101 @@ export type Database = {
           },
         ]
       }
+      seller_receipt_templates: {
+        Row: {
+          border_width: number | null
+          category_ids: string[] | null
+          created_at: string
+          description: string | null
+          display_order: number
+          font_family: string | null
+          font_size: number | null
+          height_mm: number
+          id: string
+          is_active: boolean
+          is_default: boolean
+          layout_type: string
+          name: string
+          organization_id: string
+          qr_code_data_fields: Json | null
+          qr_code_enabled: boolean
+          qr_code_offset_x_mm: number
+          qr_code_offset_y_mm: number
+          qr_code_position: string | null
+          qr_code_seller_access: Json | null
+          qr_code_size: number | null
+          required_fields: string[]
+          tag_fields: Json
+          tag_orientation: string
+          updated_at: string
+          width_mm: number
+        }
+        Insert: {
+          border_width?: number | null
+          category_ids?: string[] | null
+          created_at?: string
+          description?: string | null
+          display_order?: number
+          font_family?: string | null
+          font_size?: number | null
+          height_mm?: number
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          layout_type?: string
+          name: string
+          organization_id: string
+          qr_code_data_fields?: Json | null
+          qr_code_enabled?: boolean
+          qr_code_offset_x_mm?: number
+          qr_code_offset_y_mm?: number
+          qr_code_position?: string | null
+          qr_code_seller_access?: Json | null
+          qr_code_size?: number | null
+          required_fields?: string[]
+          tag_fields?: Json
+          tag_orientation?: string
+          updated_at?: string
+          width_mm?: number
+        }
+        Update: {
+          border_width?: number | null
+          category_ids?: string[] | null
+          created_at?: string
+          description?: string | null
+          display_order?: number
+          font_family?: string | null
+          font_size?: number | null
+          height_mm?: number
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          layout_type?: string
+          name?: string
+          organization_id?: string
+          qr_code_data_fields?: Json | null
+          qr_code_enabled?: boolean
+          qr_code_offset_x_mm?: number
+          qr_code_offset_y_mm?: number
+          qr_code_position?: string | null
+          qr_code_seller_access?: Json | null
+          qr_code_size?: number | null
+          required_fields?: string[]
+          tag_fields?: Json
+          tag_orientation?: string
+          updated_at?: string
+          width_mm?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "seller_receipt_templates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       item_categories: {
         Row: {
           created_at: string
@@ -340,6 +435,7 @@ export type Database = {
           category_id: string | null
           check_in_photo_captured_at: string | null
           check_in_photo_storage_path: string | null
+          check_in_staff_description: string | null
           checked_in_at: string | null
           created_at: string
           custom_fields: Json | null
@@ -366,6 +462,7 @@ export type Database = {
           category_id?: string | null
           check_in_photo_captured_at?: string | null
           check_in_photo_storage_path?: string | null
+          check_in_staff_description?: string | null
           checked_in_at?: string | null
           created_at?: string
           custom_fields?: Json | null
@@ -392,6 +489,7 @@ export type Database = {
           category_id?: string | null
           check_in_photo_captured_at?: string | null
           check_in_photo_storage_path?: string | null
+          check_in_staff_description?: string | null
           checked_in_at?: string | null
           created_at?: string
           custom_fields?: Json | null
@@ -444,6 +542,7 @@ export type Database = {
           id: string
           name: string
           price_reduction_settings: Json | null
+          sale_behavior_settings: Json
           slug: string
           vendor_commission_rate: number
         }
@@ -453,6 +552,7 @@ export type Database = {
           id?: string
           name: string
           price_reduction_settings?: Json | null
+          sale_behavior_settings?: Json
           slug: string
           vendor_commission_rate?: number
         }
@@ -462,6 +562,7 @@ export type Database = {
           id?: string
           name?: string
           price_reduction_settings?: Json | null
+          sale_behavior_settings?: Json
           slug?: string
           vendor_commission_rate?: number
         }
@@ -930,6 +1031,10 @@ export type Database = {
       seller_has_items_in_event: {
         Args: { event_id: string }
         Returns: boolean
+      }
+      seller_ids_matching_phone_digits: {
+        Args: { p_digits: string }
+        Returns: { id: string }[]
       }
       user_has_pickup_permission: { Args: never; Returns: boolean }
       user_has_pos_permission: { Args: never; Returns: boolean }

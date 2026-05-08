@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getEvent, type EventWithOrganization } from '../api/events';
 
 export function useEvent(eventId: string | null) {
@@ -8,16 +8,38 @@ export function useEvent(eventId: string | null) {
 
   useEffect(() => {
     if (!eventId) {
+      setEvent(null);
+      setError(null);
       setLoading(false);
       return;
     }
 
-    loadEvent();
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        setEvent(null);
+        const data = await getEvent(eventId);
+        if (!cancelled) setEvent(data);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err : new Error('Failed to load event'));
+          setEvent(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [eventId]);
 
-  const loadEvent = async () => {
+  const refetch = useCallback(async () => {
     if (!eventId) return;
-
     try {
       setLoading(true);
       setError(null);
@@ -25,10 +47,11 @@ export function useEvent(eventId: string | null) {
       setEvent(data);
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to load event'));
+      setEvent(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, [eventId]);
 
-  return { event, loading, error, refetch: loadEvent };
+  return { event, loading, error, refetch };
 }

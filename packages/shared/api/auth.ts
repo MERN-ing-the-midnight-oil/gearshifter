@@ -113,12 +113,23 @@ export const verifyPhoneOTP = async (phone: string, token: string) => {
  * (admin creates/updates phone user + password sign-in). Server allows it only for local Supabase
  * or when Edge secret ALLOW_DEV_PHONE_BYPASS=true.
  *
+ * Optional `checkInEventId` is sent as `check_in_event_id` so `user_metadata` matches organizer-initiated
+ * check-in (same `dev-phone-session-bypass` body as `send-seller-check-in-sms` in dev).
+ *
  * Uses `fetch` instead of `supabase.functions.invoke` so Expo Web behaves reliably with CORS/network errors.
  *
  * @returns Auth user from the new session (use this immediately; `getUser()` can lag right after `setSession`).
  */
-export const devBypassPhoneVerificationSession = async (phoneE164: string): Promise<User> => {
+export const devBypassPhoneVerificationSession = async (
+  phoneE164: string,
+  options?: { checkInEventId?: string | null }
+): Promise<User> => {
   const fnUrl = `${supabaseUrl}/functions/v1/dev-phone-session-bypass`;
+  const eid = options?.checkInEventId?.trim();
+  const body: Record<string, string> = { phone: phoneE164 };
+  if (eid && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(eid)) {
+    body.check_in_event_id = eid;
+  }
 
   let res: Response;
   try {
@@ -130,7 +141,7 @@ export const devBypassPhoneVerificationSession = async (phoneE164: string): Prom
         Authorization: `Bearer ${supabaseAnonKey}`,
         apikey: supabaseAnonKey,
       },
-      body: JSON.stringify({ phone: phoneE164 }),
+      body: JSON.stringify(body),
     });
   } catch (err) {
     const inner = err instanceof Error ? err.message : String(err);

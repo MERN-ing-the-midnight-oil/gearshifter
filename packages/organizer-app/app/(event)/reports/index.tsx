@@ -20,11 +20,13 @@ import {
   buildEventConsigneeExportCsv,
   useAuth,
   useAdminUser,
+  STATION_THEME,
   type EventWithOrganization,
 } from 'shared';
 import { theme } from '../../../lib/theme';
 
 export default function ReportsScreen() {
+  const stationTheme = STATION_THEME.reports;
   const router = useRouter();
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
@@ -163,10 +165,10 @@ export default function ReportsScreen() {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: stationTheme.backgroundTint }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: stationTheme.headerTint, borderBottomColor: stationTheme.headerAccent }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>

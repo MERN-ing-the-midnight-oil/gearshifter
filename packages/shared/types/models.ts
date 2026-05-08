@@ -132,6 +132,9 @@ export interface SwapRegistrationPageSettings {
 export type TagLayoutType = 'standard' | 'compact' | 'detailed';
 export type QRCodePosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
 
+/** How the physical tag is oriented for printing (stored for print workflows; designer keeps width/height in mm). */
+export type TagPrintOrientation = 'portrait' | 'landscape';
+
 /** Allowed input/value types for tag field values (stored on template JSON). */
 export type TagFieldDataType = 'text' | 'any' | 'boolean' | 'number' | 'integer' | 'dropdown';
 
@@ -152,6 +155,16 @@ export interface TagField {
   dataType?: TagFieldDataType;
   /** Choices when `dataType` is `dropdown` (empty strings ignored when saving). */
   dropdownOptions?: string[];
+  /**
+   * Optional emoji or short symbol shown at the start of this line on the tag (and in previews).
+   * Thermal printers print this as text when the font supports it.
+   */
+  tagLineEmoji?: string;
+  /**
+   * Optional HTTPS URL to a small PNG/SVG/WebP (e.g. OpenMoji, Twemoji CDN, or other clip-art libraries).
+   * Shown in digital previews; text-only thermal output skips the bitmap.
+   */
+  tagLineImageUrl?: string;
 }
 
 export interface GearTagTemplate {
@@ -170,9 +183,14 @@ export interface GearTagTemplate {
   borderWidth: number;
   qrCodeSize: number; // QR code size in mm
   qrCodePosition: QRCodePosition;
+  /** Nudge QR from the anchor (corner/center): +X right, +Y down, mm. */
+  qrCodeOffsetXMm: number;
+  qrCodeOffsetYMm: number;
   qrCodeEnabled: boolean; // QR codes are always enabled on sticker tags
   qrCodeDataFields: string[]; // Fields to include in QR code data (e.g., ["item_number", "price", "reduced_price"])
   qrCodeSellerAccess: string[]; // Fields sellers can see when scanning (empty = org users only)
+  /** Portrait vs landscape intent for this label when printing (see widthMm/heightMm). */
+  tagOrientation: TagPrintOrientation;
   isDefault: boolean;
   isActive: boolean;
   displayOrder: number;
@@ -224,9 +242,50 @@ export interface AdminUser {
 export interface PriceReductionSettings {
   sellerCanSetReduction: boolean; // Can sellers set price reductions?
   sellerCanSetTime: boolean; // Can sellers set when price reduction occurs?
+  /** Who sets reduction type and amount (percent vs flat + value). */
+  priceReductionValueControl?: 'org' | 'seller';
+  /** Who sets how many reductions are used. */
+  priceReductionCountControl?: 'org' | 'seller';
+  /** Who sets reduction timing. */
+  priceReductionTimingControl?: 'org' | 'seller';
   defaultReductionTime?: string; // Default time (HH:MM format) if org controls timing
   allowedReductionTimes?: string[]; // Allowed times sellers can choose from (if seller controls time)
+  /**
+   * Controls what sellers can enter while pre-registering an item before check-in.
+   * Item nickname, item type/category, base price, and price drops (when allowed) are always available;
+   * other fields are controlled by `sellerItemPreRegistration.allowedFieldNames`.
+   */
+  sellerItemPreRegistration?: SellerItemPreRegistrationSettings;
 }
+
+/** Field keys sellers may fill at pre-registration when the org has not set an explicit `allowedFieldNames` list. */
+export const DEFAULT_SELLER_ITEM_PRE_REGISTRATION_ALLOWED_FIELD_NAMES: readonly string[] = ['description'];
+
+export interface SellerItemPreRegistrationSettings {
+  /**
+   * Item field-definition names the seller may fill during pre-registration
+   * (for example: "description", "size", "donate_if_unsold"). Defaults include `description` until the org saves a policy.
+   */
+  allowedFieldNames: string[];
+  /**
+   * When true, fields that exist only on the selected tag template (not item field definitions)
+   * can also be edited by the seller.
+   */
+  allowTagTemplateOnlyFields?: boolean;
+}
+
+/** Persisted JSON on `organizations.sale_behavior_settings`. */
+export interface SaleBehaviorSettings {
+  /** When true, SMS the seller via Twilio on each sale (requires Twilio env on Edge). Default false. */
+  notifySellerSmsOnSale?: boolean;
+  /** Expo push notification to seller app when an item sells (existing behavior). Default true. */
+  notifySellerPushOnSale?: boolean;
+  /** Thermal receipt layout used when staff prints seller receipt after POS unless another template is chosen. */
+  defaultSellerReceiptTemplateId?: string | null;
+}
+
+/** Thermal receipt sticker layout; same JSON shape as `GearTagTemplate` for tooling reuse. */
+export type SellerReceiptTemplate = GearTagTemplate;
 
 export interface Organization {
   id: string;
@@ -235,6 +294,7 @@ export interface Organization {
   commissionRate: number | null;
   vendorCommissionRate: number | null;
   priceReductionSettings: PriceReductionSettings;
+  saleBehaviorSettings: SaleBehaviorSettings;
   createdAt: Date;
 }
 
@@ -347,6 +407,8 @@ export interface Item {
   /** Storage path in `item-check-in-photos` bucket; org-only access. */
   checkInPhotoStoragePath?: string;
   checkInPhotoCapturedAt?: Date;
+  /** Org staff handoff description at check-in when no photo; not set by sellers. */
+  checkInStaffDescription?: string;
   checkedInAt?: Date;
   soldAt?: Date;
   soldPrice?: number;

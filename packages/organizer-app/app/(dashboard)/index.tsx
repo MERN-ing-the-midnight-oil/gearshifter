@@ -10,6 +10,7 @@ import {
   archiveEvent,
   isEventArchiveEligible,
   buildSellerEventWebInviteUrl,
+  FORM_CONTROL_MAX_WIDTH,
 } from 'shared';
 import { useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
@@ -295,9 +296,47 @@ export default function OrganizerDashboardScreen() {
                 onPress={() => router.push(`/(event)/manage?id=${event.id}`)}
               >
                 <View style={styles.eventAction}>
-                  <View style={styles.manageEventButton}>
-                    <Text style={styles.manageEventButtonText}>Manage Event</Text>
-                    <Text style={styles.manageEventButtonArrow}>→</Text>
+                  <View style={styles.eventPrimaryActions}>
+                    <Pressable
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        router.push(`/(event)/manage?id=${event.id}`);
+                      }}
+                      style={({ pressed }) => [
+                        styles.manageEventButton,
+                        pressed && { opacity: 0.85 },
+                        Platform.OS === 'web' &&
+                          ({
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                          } as any),
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Manage event"
+                    >
+                      <Text style={styles.manageEventButtonText}>Manage Event</Text>
+                      <Text style={styles.manageEventButtonArrow}>→</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        router.push(`/(event)/stations?id=${event.id}`);
+                      }}
+                      style={({ pressed }) => [
+                        styles.workSaleButton,
+                        pressed && { opacity: 0.85 },
+                        Platform.OS === 'web' &&
+                          ({
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                          } as any),
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Work the Sale"
+                    >
+                      <Text style={styles.workSaleButtonText}>Work the Sale</Text>
+                      <Text style={styles.workSaleButtonArrow}>→</Text>
+                    </Pressable>
                   </View>
                   <View style={styles.eventActionRight}>
                     {isAdmin && (
@@ -462,6 +501,60 @@ export default function OrganizerDashboardScreen() {
                     <Text style={styles.settingCardTitle}>Item Registration/Tags</Text>
                     <Text style={styles.settingCardDescription}>
                       Configure item registration fields and item tags
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.settingCardArrow}>→</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.settingCard}
+              onPress={() => router.push('/(dashboard)/sale-settings')}
+            >
+              <View style={styles.settingCardContent}>
+                <View style={styles.settingCardLeft}>
+                  <Text style={styles.settingCardIcon}>🔔</Text>
+                  <View style={styles.settingCardText}>
+                    <Text style={styles.settingCardTitle}>Sale settings</Text>
+                    <Text style={styles.settingCardDescription}>
+                      Seller alerts when items sell and default POS receipt layouts
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.settingCardArrow}>→</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.settingCard}
+              onPress={() => router.push('/(dashboard)/seller-receipts')}
+            >
+              <View style={styles.settingCardContent}>
+                <View style={styles.settingCardLeft}>
+                  <Text style={styles.settingCardIcon}>🧾</Text>
+                  <View style={styles.settingCardText}>
+                    <Text style={styles.settingCardTitle}>Seller receipt templates</Text>
+                    <Text style={styles.settingCardDescription}>
+                      POS thermal slips sized like item tags; default text is sold-to, time, and amount (optional QR)
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.settingCardArrow}>→</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.settingCard}
+              onPress={() => router.push('/(dashboard)/item-pre-registration-fields')}
+            >
+              <View style={styles.settingCardContent}>
+                <View style={styles.settingCardLeft}>
+                  <Text style={styles.settingCardIcon}>📝</Text>
+                  <View style={styles.settingCardText}>
+                    <Text style={styles.settingCardTitle}>Seller Item Pre-registration</Text>
+                    <Text style={styles.settingCardDescription}>
+                      Choose what sellers can fill out before they check in items
                     </Text>
                   </View>
                 </View>
@@ -923,6 +1016,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
   },
+  eventPrimaryActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
   manageEventButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -931,6 +1032,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 10,
     gap: 8,
+  },
+  workSaleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.secondary,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    gap: 8,
+  },
+  workSaleButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.text,
+  },
+  workSaleButtonArrow: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.text,
   },
   manageEventButtonText: {
     fontSize: 16,
@@ -1012,6 +1132,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
+    alignSelf: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
   },
   createEventButtonText: {
     color: theme.buttonText,
@@ -1019,8 +1141,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   createStaffAccountButton: {
-    alignSelf: 'stretch',
-    width: '100%',
+    alignSelf: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     minHeight: 48,
     backgroundColor: theme.button,
     borderRadius: 12,

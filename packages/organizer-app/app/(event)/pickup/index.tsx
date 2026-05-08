@@ -9,6 +9,7 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
+import { BadgeCheck, Gift, HandCoins, ScanLine, Search, Wallet } from 'lucide-react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, useCallback } from 'react';
 import {
@@ -28,7 +29,12 @@ import {
   getEligibleDonationCount,
   processDonations,
   promoteEventItemToOrganizationInventory,
+  STAFF_FLOW_CONTENT_MAX_WIDTH,
+  STAFF_MOBILE_EDGE_PADDING,
+  STAFF_MOBILE_HEADER_PADDING_TOP,
+  STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   ITEM_STATUS_PICKUP_STATION_COMPLETE,
+  STATION_THEME,
   type Seller,
   type Item,
 } from 'shared';
@@ -40,6 +46,7 @@ const DONATE_CERTIFICATION_MESSAGE =
   'You are certifying that the seller has donated the item.';
 
 export default function PickupScreen() {
+  const stationTheme = STATION_THEME.pickup;
   const router = useRouter();
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
@@ -332,8 +339,8 @@ export default function PickupScreen() {
         ) : (
           <Text style={styles.errorText}>Event not found</Text>
         )}
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>← Back</Text>
+        <TouchableOpacity style={styles.errorScreenButton} onPress={() => router.back()}>
+          <Text style={styles.errorScreenButtonText}>← Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -349,12 +356,12 @@ export default function PickupScreen() {
 
     return (
       <ScrollView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: stationTheme.backgroundTint }]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: stationTheme.headerTint, borderBottomColor: stationTheme.headerAccent }]}>
           <TouchableOpacity onPress={handleBackToScan} style={styles.backButton}>
             <Text style={styles.backButtonText}>← Next seller</Text>
           </TouchableOpacity>
@@ -417,14 +424,17 @@ export default function PickupScreen() {
                   )}
                   {paymentStatus && paymentStatus.unpaidItemsCount > 0 && (
                     <TouchableOpacity
-                      style={styles.primaryButton}
+                      style={[styles.primaryButton, { backgroundColor: stationTheme.actionAccent }]}
                       onPress={handleMarkAllPaid}
                       disabled={!!actionLoading}
                     >
                       {actionLoading === 'all' ? (
                         <ActivityIndicator color="#fff" size="small" />
                       ) : (
-                        <Text style={styles.primaryButtonText}>Mark all as paid</Text>
+                        <View style={styles.iconButtonContent}>
+                          <Wallet size={16} color="#FFFFFF" />
+                          <Text style={styles.primaryButtonText}>Mark all as paid</Text>
+                        </View>
                       )}
                     </TouchableOpacity>
                   )}
@@ -454,7 +464,10 @@ export default function PickupScreen() {
                             {actionLoading === item.id ? (
                               <ActivityIndicator color={theme.primary} size="small" />
                             ) : (
-                              <Text style={styles.smallButtonText}>Mark paid</Text>
+                              <View style={styles.iconButtonContent}>
+                                <HandCoins size={15} color={theme.primary} />
+                                <Text style={styles.smallButtonText}>Mark paid</Text>
+                              </View>
                             )}
                           </TouchableOpacity>
                         )}
@@ -496,7 +509,10 @@ export default function PickupScreen() {
                         {actionLoading === item.id ? (
                           <ActivityIndicator color={theme.primary} size="small" />
                         ) : (
-                          <Text style={styles.smallButtonText}>Picked up</Text>
+                          <View style={styles.iconButtonContent}>
+                            <BadgeCheck size={15} color={theme.primary} />
+                            <Text style={styles.smallButtonText}>Picked up</Text>
+                          </View>
                         )}
                       </TouchableOpacity>
                       <TouchableOpacity
@@ -504,7 +520,10 @@ export default function PickupScreen() {
                         onPress={() => handleMarkDonated(item)}
                         disabled={!!actionLoading}
                       >
-                        <Text style={styles.smallButtonText}>Donate</Text>
+                        <View style={styles.iconButtonContent}>
+                          <Gift size={15} color={theme.primary} />
+                          <Text style={styles.smallButtonText}>Donate</Text>
+                        </View>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -554,8 +573,8 @@ export default function PickupScreen() {
 
   // Scan / Search entry
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
+    <ScrollView style={[styles.container, { backgroundColor: stationTheme.backgroundTint }]}>
+      <View style={[styles.header, { backgroundColor: stationTheme.headerTint, borderBottomColor: stationTheme.headerAccent }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
@@ -568,17 +587,23 @@ export default function PickupScreen() {
           style={[styles.modeButton, mode === 'scan' && styles.modeButtonActive]}
           onPress={() => setMode('scan')}
         >
-          <Text style={[styles.modeButtonText, mode === 'scan' && styles.modeButtonTextActive]}>
-            Scan QR
-          </Text>
+          <View style={styles.iconButtonContent}>
+            <ScanLine size={14} color={mode === 'scan' ? theme.buttonText : theme.textSecondary} />
+            <Text style={[styles.modeButtonText, mode === 'scan' && styles.modeButtonTextActive]}>
+              Scan QR
+            </Text>
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.modeButton, mode === 'search' && styles.modeButtonActive]}
           onPress={() => setMode('search')}
         >
-          <Text style={[styles.modeButtonText, mode === 'search' && styles.modeButtonTextActive]}>
-            Seller has presented their ID
-          </Text>
+          <View style={styles.iconButtonContent}>
+            <Search size={14} color={mode === 'search' ? theme.buttonText : theme.textSecondary} />
+            <Text style={[styles.modeButtonText, mode === 'search' && styles.modeButtonTextActive]}>
+              Seller has presented their ID
+            </Text>
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -703,11 +728,12 @@ const styles = StyleSheet.create({
   centered: {
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   header: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_HEADER_PADDING_TOP,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: theme.surface,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
@@ -746,33 +772,45 @@ const styles = StyleSheet.create({
   },
   modeSelector: {
     flexDirection: 'row',
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingVertical: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: theme.surface,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
+    gap: 8,
   },
   modeButton: {
     flex: 1,
     paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginHorizontal: 4,
+    paddingHorizontal: 8,
     borderRadius: 8,
     backgroundColor: theme.background,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   modeButtonActive: {
     backgroundColor: theme.primary,
   },
   modeButtonText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
     color: theme.textSecondary,
+    textAlign: 'center',
   },
   modeButtonTextActive: {
     color: theme.buttonText,
   },
+  iconButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
   section: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 8,
   },
   sectionTitle: {
     fontSize: 20,
@@ -788,35 +826,46 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: theme.surface,
     borderRadius: 8,
-    padding: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: theme.border,
     marginBottom: 16,
+    color: theme.text,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
     gap: 12,
     marginBottom: 16,
   },
   searchInput: {
     flex: 1,
+    width: '100%',
     marginBottom: 0,
   },
   searchButton: {
     backgroundColor: theme.primary,
-    borderRadius: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   primaryButton: {
     backgroundColor: theme.primary,
     borderRadius: 12,
-    padding: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
     marginBottom: 12,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   primaryButtonText: {
     color: theme.buttonText,
@@ -826,11 +875,16 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: theme.surface,
     borderRadius: 12,
-    padding: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
     marginBottom: 12,
     borderWidth: 1,
     borderColor: theme.border,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   secondaryButtonText: {
     color: theme.text,
@@ -876,12 +930,14 @@ const styles = StyleSheet.create({
   checkInput: {
     backgroundColor: theme.surface,
     borderRadius: 8,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: theme.border,
     marginBottom: 12,
     color: theme.text,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   statusTag: {
     fontSize: 12,
@@ -933,17 +989,21 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   itemActions: {
-    flexDirection: 'row',
-    gap: 12,
+    flexDirection: 'column',
+    gap: 10,
     marginTop: 8,
+    alignSelf: 'stretch',
   },
   smallButton: {
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: theme.primary,
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   smallButtonText: {
     fontSize: 14,
@@ -989,5 +1049,20 @@ const styles = StyleSheet.create({
   resultPhone: {
     fontSize: 14,
     color: theme.textSecondary,
+  },
+  errorScreenButton: {
+    backgroundColor: theme.button,
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  errorScreenButtonText: {
+    color: theme.buttonText,
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

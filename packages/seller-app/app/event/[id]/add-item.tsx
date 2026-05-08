@@ -27,6 +27,7 @@ import {
   isUuidString,
   resolveTagFieldDataType,
   tagFieldDropdownOptions,
+  DEFAULT_SELLER_ITEM_PRE_REGISTRATION_ALLOWED_FIELD_NAMES,
   type ItemFieldDefinition,
   type ItemCategory,
   type Item,
@@ -89,6 +90,14 @@ export default function AddItemScreen() {
 
   const itemTypeOptions = useMemo(() => flattenItemCategoriesForPicker(itemTypesTree), [itemTypesTree]);
 
+  useEffect(() => {
+    console.log('[SellerAddItem] screen', {
+      routeEventId: id || undefined,
+      itemIdParam: itemIdParam ?? undefined,
+      hasUser: !!user?.id,
+    });
+  }, [id, itemIdParam, user?.id]);
+
   const effectiveItemTypeId = useMemo(
     () => (itemIdParam ? editingItem?.categoryId ?? undefined : itemTypeId ?? undefined),
     [itemIdParam, editingItem?.categoryId, itemTypeId]
@@ -98,6 +107,29 @@ export default function AddItemScreen() {
     if (!effectiveItemTypeId) return '';
     return itemTypeOptions.find((o) => o.id === effectiveItemTypeId)?.label ?? '';
   }, [effectiveItemTypeId, itemTypeOptions]);
+
+  const sellerPreRegSettings = useMemo(
+    () =>
+      event?.organization?.priceReductionSettings?.sellerItemPreRegistration ?? {
+        allowedFieldNames: [...DEFAULT_SELLER_ITEM_PRE_REGISTRATION_ALLOWED_FIELD_NAMES],
+        allowTagTemplateOnlyFields: false,
+      },
+    [event?.organization?.priceReductionSettings?.sellerItemPreRegistration]
+  );
+  const allowedPreRegFieldNames = useMemo(
+    () => new Set((sellerPreRegSettings.allowedFieldNames ?? []).map((name) => name.trim()).filter(Boolean)),
+    [sellerPreRegSettings.allowedFieldNames]
+  );
+  const visibleFieldDefinitions = useMemo(
+    () =>
+      fieldDefinitions.filter((field) => {
+        if (field.name === 'category' || field.name === 'category_id') return false;
+        if (field.isPriceField) return false;
+        if (field.isPriceReductionField) return true;
+        return allowedPreRegFieldNames.has(field.name);
+      }),
+    [fieldDefinitions, allowedPreRegFieldNames]
+  );
 
   const availableTagFieldMeta: TagFieldMeta[] = useMemo(() => {
     const out: TagFieldMeta[] = [...GEAR_TAG_BUILTIN_META];
@@ -365,7 +397,7 @@ export default function AddItemScreen() {
     const basePrice = parseFloat(String(sellerPrice || '').replace(/,/g, ''));
 
     // Validate required fields (price lives in sellerPrice, not formData — see filtered isPriceField)
-    for (const field of fieldDefinitions) {
+    for (const field of visibleFieldDefinitions) {
       if (!field.isRequired) continue;
       if (field.isPriceField) {
         if (!String(sellerPrice || '').trim() || Number.isNaN(basePrice) || basePrice <= 0) {
@@ -387,8 +419,20 @@ export default function AddItemScreen() {
     }
 
     // Validate price reduction if enabled
-    const priceReductionField = fieldDefinitions.find((f) => f.isPriceReductionField);
+    const priceReductionField = visibleFieldDefinitions.find((f) => f.isPriceReductionField);
+    const priceSettings = event?.organization?.priceReductionSettings;
+    const sellerCanSetReductionAmount =
+      (priceSettings?.priceReductionValueControl ?? (priceSettings?.sellerCanSetReduction ? 'seller' : 'org')) ===
+      'seller';
+    const sellerCanSetReductionTiming =
+      (priceSettings?.priceReductionTimingControl ?? (priceSettings?.sellerCanSetTime ? 'seller' : 'org')) ===
+        'seller' &&
+      (priceSettings?.priceReductionCountControl ?? 'seller') === 'seller';
     if (priceReductionField && formData[priceReductionField.name]) {
+      if (!sellerCanSetReductionAmount) {
+        Alert.alert('Error', 'Price reduction amount is controlled by the organization.');
+        return;
+      }
       const reductionValue = parseFloat(String(formData[priceReductionField.name] || ''));
       if (priceReductionField.priceReductionPercentage) {
         if (reductionValue <= 0 || reductionValue >= 100) {
@@ -406,6 +450,9 @@ export default function AddItemScreen() {
     const tplReq = gearTemplate?.requiredFields ?? [];
     for (const reqName of tplReq) {
       if (skipStandaloneTagField(reqName)) continue;
+      if (!sellerPreRegSettings.allowTagTemplateOnlyFields && !visibleFieldDefinitions.some((f) => f.name === reqName)) {
+        continue;
+      }
       const tagTf = gearTemplate?.tagFields?.find((t) => t.field === reqName);
       const tagDt = tagTf ? resolveTagFieldDataType(tagTf) : undefined;
       const v = formData[reqName];
@@ -431,10 +478,10 @@ export default function AddItemScreen() {
     setSubmitting(true);
     try {
       // Build custom fields object (exclude special fields that go to legacy columns)
-      const customFields: Record<string, unknown> = {};
+      const customFields: Record<string, unknown> = editingItem?.customFields ? { ...editingItem.customFields } : {};
       const legacyData: any = {};
 
-      fieldDefinitions.forEach((field) => {
+      visibleFieldDefinitions.forEach((field) => {
         const value = formData[field.name];
 
         // Never send free-text category values into category_id (UUID) — PostgREST returns 400.
@@ -455,7 +502,11 @@ export default function AddItemScreen() {
           legacyData.enablePriceReduction = !!value;
           
           // Handle price reduction time
-          if (field.priceReductionTimeControl === 'seller' && formData[`${field.name}_time`]) {
+          if (
+            field.priceReductionTimeControl === 'seller' &&
+            sellerCanSetReductionTiming &&
+            formData[`${field.name}_time`]
+          ) {
             // Seller set the time
             const reductionTime = formData[`${field.name}_time`] as string;
             // Store in price_reduction_times array
@@ -467,7 +518,7 @@ export default function AddItemScreen() {
               price: parseFloat(String(value || 0)),
               isPercentage: field.priceReductionPercentage,
             });
-          } else if (event?.organization && !event.organization.priceReductionSettings.sellerCanSetTime) {
+          } else if (event?.organization && !sellerCanSetReductionTiming) {
             // Org controls time - use default time
             const defaultTime = event.organization.priceReductionSettings.defaultReductionTime;
             if (defaultTime && value) {
@@ -486,7 +537,7 @@ export default function AddItemScreen() {
         }
       });
 
-      if (gearTemplate?.tagFields) {
+      if (sellerPreRegSettings.allowTagTemplateOnlyFields && gearTemplate?.tagFields) {
         for (const tf of gearTemplate.tagFields) {
           if (skipStandaloneTagField(tf.field)) continue;
           if (fieldDefinitions.some((fd) => fd.name === tf.field)) continue;
@@ -553,7 +604,10 @@ export default function AddItemScreen() {
     // Check if field should be shown based on org price reduction settings
     if (field.isPriceReductionField && event?.organization) {
       const priceSettings = event.organization.priceReductionSettings;
-      if (!priceSettings.sellerCanSetReduction) {
+      const sellerCanSetReductionAmount =
+        (priceSettings.priceReductionValueControl ?? (priceSettings.sellerCanSetReduction ? 'seller' : 'org')) ===
+        'seller';
+      if (!sellerCanSetReductionAmount) {
         // Seller can't set price reductions - hide this field
         return null;
       }
@@ -798,7 +852,11 @@ export default function AddItemScreen() {
         // For price reduction time fields, check org settings
         if (field.isPriceReductionField && event?.organization) {
           const priceSettings = event.organization.priceReductionSettings;
-          if (!priceSettings.sellerCanSetTime) {
+          const sellerCanSetReductionTiming =
+            (priceSettings.priceReductionTimingControl ?? (priceSettings.sellerCanSetTime ? 'seller' : 'org')) ===
+              'seller' &&
+            (priceSettings.priceReductionCountControl ?? 'seller') === 'seller';
+          if (!sellerCanSetReductionTiming) {
             // Seller can't set time - show read-only with org's default time
             return (
               <View key={field.id} style={styles.field}>
@@ -1203,16 +1261,11 @@ export default function AddItemScreen() {
               <Text style={styles.helpText}>The price you are asking for this item at the swap.</Text>
             </View>
 
-            {fieldDefinitions
-              .filter(
-                (f) =>
-                  f.name !== 'category' &&
-                  f.name !== 'category_id' &&
-                  !f.isPriceField
-              )
-              .map((field) => renderField(field))}
+            {visibleFieldDefinitions.map((field) => renderField(field))}
 
-            {gearTemplate?.tagFields?.map((tf) => renderSupplementaryTagField(tf))}
+            {sellerPreRegSettings.allowTagTemplateOnlyFields
+              ? gearTemplate?.tagFields?.map((tf) => renderSupplementaryTagField(tf))
+              : null}
 
             <View style={styles.infoBox}>
               <Text style={styles.infoText}>

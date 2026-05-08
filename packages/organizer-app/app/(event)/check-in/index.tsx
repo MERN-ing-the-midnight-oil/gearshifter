@@ -9,6 +9,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
+import { BadgeCheck, PackagePlus, ScanLine, UserPlus } from 'lucide-react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState, useEffect } from 'react';
 import {
@@ -17,13 +18,20 @@ import {
   getSellerById,
   getSellerItemsByEvent,
   searchSellers,
+  lookupSellersByPhoneForCheckIn,
+  sendSellerCheckInSignupSms,
   getItem,
   parseSellerQRCode,
   parseItemQRCode,
   formatSellerItemStatusLabel,
+  STAFF_MOBILE_EDGE_PADDING,
+  STAFF_MOBILE_HEADER_PADDING_TOP,
+  STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+  STATION_THEME,
   type Seller,
   type Item,
 } from 'shared';
+import { theme, cardShadow } from '../../../lib/theme';
 import { printItemTags } from '../../../hardware/tagPrinter';
 
 function organizerCheckInListStatusLabel(status: Item['status']): string {
@@ -31,7 +39,7 @@ function organizerCheckInListStatusLabel(status: Item['status']): string {
   return formatSellerItemStatusLabel(status);
 }
 
-type CheckInMode = 'scan' | 'search' | 'register' | 'items';
+type CheckInMode = 'home' | 'lookup' | 'items';
 
 function firstQueryParam(v: string | string[] | undefined): string | undefined {
   if (v == null) return undefined;
@@ -39,13 +47,14 @@ function firstQueryParam(v: string | string[] | undefined): string | undefined {
 }
 
 export default function CheckInScreen() {
+  const stationTheme = STATION_THEME.checkIn;
   const params = useLocalSearchParams<{ id: string | string[]; sellerId?: string | string[] }>();
   const eventId = firstQueryParam(params.id);
   const sellerId = firstQueryParam(params.sellerId);
-  const { event, loading: eventLoading } = useEvent(eventId);
+  const { event, loading: eventLoading } = useEvent(eventId ?? null);
   const router = useRouter();
 
-  const [mode, setMode] = useState<CheckInMode>('scan');
+  const [mode, setMode] = useState<CheckInMode>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Seller[]>([]);
   const [searching, setSearching] = useState(false);
@@ -54,6 +63,10 @@ export default function CheckInScreen() {
   const [loadingItems, setLoadingItems] = useState(false);
   const [printingAllTags, setPrintingAllTags] = useState(false);
   const [qrCodeInput, setQrCodeInput] = useState('');
+  const [phoneLookupInput, setPhoneLookupInput] = useState('');
+  const [phoneLookupLoading, setPhoneLookupLoading] = useState(false);
+  const [phoneLookupResults, setPhoneLookupResults] = useState<Seller[] | null>(null);
+  const [sendingSellerSms, setSendingSellerSms] = useState(false);
 
   // Load items when seller is selected
   useEffect(() => {
@@ -161,6 +174,8 @@ export default function CheckInScreen() {
     setMode('items');
     setSearchQuery('');
     setSearchResults([]);
+    setPhoneLookupInput('');
+    setPhoneLookupResults(null);
   };
 
   const loadSellerItems = async () => {
@@ -209,13 +224,83 @@ export default function CheckInScreen() {
     router.push(`/(event)/check-in/register-seller?eventId=${eventId}`);
   };
 
-  const handleBackToScan = () => {
+  const handleRegisterGear = () => {
+    router.push(`/(event)/check-in/register-guest?eventId=${eventId}`);
+  };
+
+  const handleBackToHome = () => {
     setSelectedSeller(null);
     setSellerItems([]);
-    setMode('scan');
+    setMode('home');
     setQrCodeInput('');
     setSearchQuery('');
     setSearchResults([]);
+  };
+
+  const handleBackFromLookup = () => {
+    setQrCodeInput('');
+    setSearchQuery('');
+    setSearchResults([]);
+    setPhoneLookupInput('');
+    setPhoneLookupResults(null);
+    setMode('home');
+  };
+
+  const handlePhoneLookup = async () => {
+    if (!phoneLookupInput.trim()) {
+      Alert.alert('Error', 'Please enter a phone number');
+      return;
+    }
+    const digits = phoneLookupInput.replace(/\D/g, '');
+    if (digits.length < 10) {
+      Alert.alert('Error', 'Enter at least 10 digits (include area code).');
+      return;
+    }
+    if (!eventId) return;
+    setPhoneLookupLoading(true);
+    try {
+      const results = await lookupSellersByPhoneForCheckIn(phoneLookupInput);
+      setPhoneLookupResults(results);
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Phone lookup failed');
+      setPhoneLookupResults(null);
+    } finally {
+      setPhoneLookupLoading(false);
+    }
+  };
+
+  const handleSendSellerSignupSms = () => {
+    if (!eventId) return;
+    const trimmed = phoneLookupInput.trim();
+    if (!trimmed) {
+      Alert.alert('Error', 'Enter a phone number first');
+      return;
+    }
+    Alert.alert(
+      'Text sign-in to seller',
+      'This sends a text message with a sign-in code to the seller app (same as when they tap sign in with phone). After they verify the code and complete their profile, they can show you their account QR code here.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send text',
+          onPress: async () => {
+            setSendingSellerSms(true);
+            try {
+              const { simulatedSms } = await sendSellerCheckInSignupSms({ phone: trimmed, eventId });
+              const devBody =
+                'No SMS was sent (dev mode). Ask the seller to open the seller app, enter this number, then tap SKIP VERIFICATION on the login or code screen.';
+              const prodBody =
+                'Ask the seller to open the seller app, enter this phone number, tap the sign-in text, enter the code, finish profile setup, then return here so you can scan their QR code.';
+              Alert.alert(simulatedSms ? 'Dev: sign-in prepared' : 'Text sent', simulatedSms ? devBody : prodBody);
+            } catch (err) {
+              Alert.alert('Could not send', err instanceof Error ? err.message : 'SMS failed');
+            } finally {
+              setSendingSellerSms(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   if (eventLoading) {
@@ -231,8 +316,8 @@ export default function CheckInScreen() {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Event not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Go Back</Text>
+        <TouchableOpacity style={styles.errorOutlineButton} onPress={() => router.back()}>
+          <Text style={styles.errorOutlineButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -241,9 +326,9 @@ export default function CheckInScreen() {
   // Items view - show seller's items
   if (mode === 'items' && selectedSeller) {
     return (
-      <ScrollView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleBackToScan} style={styles.backButton}>
+      <ScrollView style={[styles.container, { backgroundColor: stationTheme.backgroundTint }]}>
+        <View style={[styles.header, { backgroundColor: stationTheme.headerTint, borderBottomColor: stationTheme.headerAccent }]}>
+          <TouchableOpacity onPress={handleBackToHome} style={styles.backButton}>
             <Text style={styles.backButtonText}>← Back</Text>
           </TouchableOpacity>
           <Text style={styles.title}>Seller Items</Text>
@@ -313,10 +398,10 @@ export default function CheckInScreen() {
     );
   }
 
-  // Main check-in view - scan/search/register
+  // Main check-in view — home choices or lookup (QR + search)
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
+    <ScrollView style={[styles.container, { backgroundColor: stationTheme.backgroundTint }]}>
+      <View style={[styles.header, { backgroundColor: stationTheme.headerTint, borderBottomColor: stationTheme.headerAccent }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
@@ -324,135 +409,212 @@ export default function CheckInScreen() {
         <Text style={styles.subtitle}>{event.name}</Text>
       </View>
 
-      <View style={styles.modeSelector}>
-        <TouchableOpacity
-          style={[styles.modeButton, mode === 'scan' && styles.modeButtonActive]}
-          onPress={() => setMode('scan')}
-        >
-          <Text style={[styles.modeButtonText, mode === 'scan' && styles.modeButtonTextActive]}>
-            Scan QR
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modeButton, mode === 'search' && styles.modeButtonActive]}
-          onPress={() => setMode('search')}
-        >
-          <Text style={[styles.modeButtonText, mode === 'search' && styles.modeButtonTextActive]}>
-            Search
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modeButton, mode === 'register' && styles.modeButtonActive]}
-          onPress={() => setMode('register')}
-        >
-          <Text style={[styles.modeButtonText, mode === 'register' && styles.modeButtonTextActive]}>
-            Register
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {mode === 'scan' && (
-        <View style={styles.scanContainer}>
-          <Text style={styles.sectionTitle}>Scan QR Code</Text>
-          <Text style={styles.helpText}>
-            Scan a seller QR to look up their account, or a pre-registered item QR to open that item
-            for check-in. You can also paste either code below.
-          </Text>
-          
-          <TextInput
-            style={styles.qrInput}
-            placeholder="Seller QR, item QR, or deep link"
-            value={qrCodeInput}
-            onChangeText={setQrCodeInput}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          
+      {mode === 'home' && (
+        <View style={styles.homeOptions}>
           <TouchableOpacity
-            style={styles.scanButton}
-            onPress={handleManualQRCode}
-            disabled={!qrCodeInput.trim()}
-          >
-            <Text style={styles.scanButtonText}>Lookup Pre-registered item</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.registerNewSellerButton}
+            style={[styles.homeOptionButton, { backgroundColor: stationTheme.actionAccent }]}
             onPress={handleRegisterNewSeller}
+            activeOpacity={0.88}
           >
-            <Text style={styles.registerNewSellerButtonText}>Register New Seller</Text>
+            <View style={styles.homeOptionContent}>
+              <UserPlus size={20} color={theme.buttonText} />
+              <Text style={styles.homeOptionTitle}>Register a Seller</Text>
+            </View>
           </TouchableOpacity>
 
-          <Text style={styles.noteText}>
-            Note: QR code scanning with camera will be added in a future update
-          </Text>
+          <TouchableOpacity
+            style={[styles.homeOptionButton, { backgroundColor: stationTheme.actionAccent }]}
+            onPress={() => setMode('lookup')}
+            activeOpacity={0.88}
+          >
+            <View style={styles.homeOptionContent}>
+              <ScanLine size={20} color={theme.buttonText} />
+              <Text style={styles.homeOptionTitle}>Look up an existing seller</Text>
+            </View>
+            <Text style={styles.homeOptionSubtitle}>By phone, name, email, or seller QR</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.homeOptionButton, { backgroundColor: stationTheme.actionAccent }]}
+            onPress={() => setMode('lookup')}
+            activeOpacity={0.88}
+          >
+            <View style={styles.homeOptionContent}>
+              <BadgeCheck size={20} color={theme.buttonText} />
+              <Text style={styles.homeOptionTitle}>Check in a pre-registered seller or gear</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.homeOptionButton, { backgroundColor: stationTheme.actionAccent }]}
+            onPress={handleRegisterGear}
+            activeOpacity={0.88}
+          >
+            <View style={styles.homeOptionContent}>
+              <PackagePlus size={20} color={theme.buttonText} />
+              <Text style={styles.homeOptionTitle}>Register gear</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       )}
 
-      {mode === 'search' && (
-        <View style={styles.searchContainer}>
-          <Text style={styles.sectionTitle}>Search for Seller</Text>
-          <Text style={styles.helpText}>
-            Search by name, phone number, or email
-          </Text>
-          
-          <View style={styles.searchInputContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Enter name, phone, or email"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCapitalize="words"
-              autoCorrect={false}
-              onSubmitEditing={handleSearch}
-            />
-            <TouchableOpacity
-              style={styles.searchButton}
-              onPress={handleSearch}
-              disabled={searching || !searchQuery.trim()}
-            >
-              {searching ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.searchButtonText}>Search</Text>
-              )}
+      {mode === 'lookup' && (
+        <View style={styles.lookupRoot}>
+          <View style={[styles.lookupHeaderBar, { backgroundColor: stationTheme.headerTint, borderBottomColor: stationTheme.headerAccent }]}>
+            <TouchableOpacity onPress={handleBackFromLookup} style={styles.backButton}>
+              <Text style={styles.backButtonText}>← Back</Text>
             </TouchableOpacity>
+            <Text style={styles.lookupScreenTitle}>Check-in</Text>
+            <Text style={styles.lookupScreenSubtitle}>
+              Find a seller by phone, name search, or seller QR — or paste an item QR or check-in link
+            </Text>
           </View>
 
-          {searchResults.length > 0 && (
-            <View style={styles.resultsContainer}>
-              <Text style={styles.resultsTitle}>Search Results</Text>
-              {searchResults.map((seller) => (
-                <TouchableOpacity
-                  key={seller.id}
-                  style={styles.resultCard}
-                  onPress={() => selectSeller(seller)}
-                >
-                  <Text style={styles.resultName}>
-                    {seller.firstName} {seller.lastName}
-                  </Text>
-                  <Text style={styles.resultEmail}>{seller.email}</Text>
-                  <Text style={styles.resultPhone}>{seller.phone}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
-      )}
+          <View style={styles.scanContainer}>
+            <Text style={styles.sectionTitle}>Seller or item code</Text>
+            <Text style={styles.helpText}>
+              Paste a seller QR, item QR, or check-in link. Camera scanning can be added later.
+            </Text>
 
-      {mode === 'register' && (
-        <View style={styles.registerContainer}>
-          <Text style={styles.sectionTitle}>Register New Seller</Text>
-          <Text style={styles.helpText}>
-            Help a seller create an account and register for this event
-          </Text>
-          
-          <TouchableOpacity
-            style={styles.registerButton}
-            onPress={handleRegisterNewSeller}
-          >
-            <Text style={styles.registerButtonText}>Start Registration</Text>
-          </TouchableOpacity>
+            <TextInput
+              style={styles.qrInput}
+              placeholder="Seller QR, item QR, or deep link"
+              value={qrCodeInput}
+              onChangeText={setQrCodeInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              style={styles.scanButton}
+              onPress={handleManualQRCode}
+              disabled={!qrCodeInput.trim()}
+            >
+              <Text style={styles.scanButtonText}>Look up code</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.noteText}>
+              Note: QR code scanning with camera will be added in a future update
+            </Text>
+          </View>
+
+          <View style={styles.searchContainer}>
+            <Text style={styles.sectionTitle}>Look up by phone</Text>
+            <Text style={styles.helpText}>
+              Find an existing seller by number, or text a new seller so they can create an account in the seller app and
+              bring back their QR code.
+            </Text>
+            <View style={styles.searchInputContainer}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Phone number"
+                value={phoneLookupInput}
+                onChangeText={(t) => {
+                  setPhoneLookupInput(t);
+                  setPhoneLookupResults(null);
+                }}
+                keyboardType="phone-pad"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={handlePhoneLookup}
+              />
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={handlePhoneLookup}
+                disabled={phoneLookupLoading || !phoneLookupInput.trim()}
+              >
+                {phoneLookupLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.searchButtonText}>Look up phone</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {phoneLookupResults !== null && phoneLookupResults.length > 0 && (
+              <View style={styles.resultsContainer}>
+                <Text style={styles.resultsTitle}>Matching sellers</Text>
+                {phoneLookupResults.map((seller) => (
+                  <TouchableOpacity
+                    key={seller.id}
+                    style={styles.resultCard}
+                    onPress={() => selectSeller(seller)}
+                  >
+                    <Text style={styles.resultName}>
+                      {seller.firstName} {seller.lastName}
+                    </Text>
+                    <Text style={styles.resultEmail}>{seller.email}</Text>
+                    <Text style={styles.resultPhone}>{seller.phone}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {phoneLookupResults !== null && phoneLookupResults.length === 0 && (
+              <View style={styles.phoneNoMatchBox}>
+                <Text style={styles.phoneNoMatchText}>No seller profile uses this phone number yet.</Text>
+                <TouchableOpacity
+                  style={[styles.inviteSmsButton, sendingSellerSms && styles.inviteSmsButtonDisabled]}
+                  onPress={handleSendSellerSignupSms}
+                  disabled={sendingSellerSms}
+                  activeOpacity={0.88}
+                >
+                  {sendingSellerSms ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.inviteSmsButtonText}>Text sign-in to this number</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.searchContainer}>
+            <Text style={styles.sectionTitle}>Search for seller</Text>
+            <Text style={styles.helpText}>Search by name, phone number, or email</Text>
+
+            <View style={styles.searchInputContainer}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Enter name, phone, or email"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="words"
+                autoCorrect={false}
+                onSubmitEditing={handleSearch}
+              />
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={handleSearch}
+                disabled={searching || !searchQuery.trim()}
+              >
+                {searching ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.searchButtonText}>Search</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {searchResults.length > 0 && (
+              <View style={styles.resultsContainer}>
+                <Text style={styles.resultsTitle}>Search results</Text>
+                {searchResults.map((seller) => (
+                  <TouchableOpacity
+                    key={seller.id}
+                    style={styles.resultCard}
+                    onPress={() => selectSeller(seller)}
+                  >
+                    <Text style={styles.resultName}>
+                      {seller.firstName} {seller.lastName}
+                    </Text>
+                    <Text style={styles.resultEmail}>{seller.email}</Text>
+                    <Text style={styles.resultPhone}>{seller.phone}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
         </View>
       )}
     </ScrollView>
@@ -468,15 +630,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   loadingText: {
     marginTop: 10,
     color: '#666',
   },
   header: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_HEADER_PADDING_TOP,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
@@ -491,41 +654,76 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
   },
-  modeSelector: {
+  homeOptions: {
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 8,
+    gap: 10,
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
+  },
+  homeOptionButton: {
+    backgroundColor: theme.button,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...cardShadow,
+  },
+  homeOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.buttonText,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  homeOptionContent: {
     flexDirection: 'row',
-    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  homeOptionSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.88)',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  lookupRoot: {
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 16,
+  },
+  lookupHeaderBar: {
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: 4,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
   },
-  modeButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginHorizontal: 4,
-    borderRadius: 8,
-    backgroundColor: '#F5F5F5',
-    alignItems: 'center',
+  lookupScreenTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1A1A1A',
+    marginBottom: 4,
   },
-  modeButtonActive: {
-    backgroundColor: '#007AFF',
-  },
-  modeButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+  lookupScreenSubtitle: {
+    fontSize: 14,
     color: '#666',
   },
-  modeButtonTextActive: {
-    color: '#FFFFFF',
-  },
   scanContainer: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 8,
   },
   searchContainer: {
-    padding: 20,
-  },
-  registerContainer: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 8,
   },
   sectionTitle: {
     fontSize: 20,
@@ -541,30 +739,24 @@ const styles = StyleSheet.create({
   qrInput: {
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
-    padding: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#E5E5E5',
     marginBottom: 16,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   scanButton: {
     backgroundColor: '#007AFF',
     borderRadius: 12,
-    padding: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
     marginBottom: 12,
-  },
-  registerNewSellerButton: {
-    backgroundColor: '#34C759',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  registerNewSellerButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   scanButtonText: {
     color: '#FFFFFF',
@@ -578,25 +770,30 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   searchInputContainer: {
-    flexDirection: 'row',
+    flexDirection: 'column',
+    gap: 12,
     marginBottom: 20,
   },
   searchInput: {
-    flex: 1,
+    width: '100%',
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
-    padding: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#E5E5E5',
-    marginRight: 12,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   searchButton: {
     backgroundColor: '#007AFF',
-    borderRadius: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 16,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   searchButtonText: {
     color: '#FFFFFF',
@@ -635,19 +832,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
-  registerButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
+  phoneNoMatchBox: {
+    marginTop: 8,
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
   },
-  registerButtonText: {
+  phoneNoMatchText: {
+    fontSize: 15,
+    color: '#444',
+    marginBottom: 14,
+    lineHeight: 22,
+  },
+  inviteSmsButton: {
+    backgroundColor: '#34C759',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+  },
+  inviteSmsButtonDisabled: {
+    opacity: 0.65,
+  },
+  inviteSmsButtonText: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
   },
   itemsList: {
-    padding: 20,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_EDGE_PADDING,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 24,
   },
   itemCard: {
     backgroundColor: '#FFFFFF',
@@ -707,7 +926,8 @@ const styles = StyleSheet.create({
     color: '#007AFF',
   },
   emptyContainer: {
-    padding: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingVertical: 32,
     alignItems: 'center',
   },
   emptyText: {
@@ -719,9 +939,13 @@ const styles = StyleSheet.create({
   addItemButton: {
     backgroundColor: '#007AFF',
     borderRadius: 12,
-    padding: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
     marginTop: 12,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   addItemButtonText: {
     color: '#FFFFFF',
@@ -735,6 +959,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 18,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   printAllButtonDisabled: {
     opacity: 0.65,
@@ -757,5 +983,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#DC3545',
     marginBottom: 20,
+    textAlign: 'center',
+  },
+  errorOutlineButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorOutlineButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

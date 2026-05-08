@@ -4,6 +4,25 @@ import type { SellerSwapRegistration } from '../types/models';
 /**
  * Get swap registration for a seller and event
  */
+/**
+ * Ensures a minimal `seller_swap_registrations` row exists so org RLS can resolve the seller for this event.
+ * The seller client must have synced this `eventId` onto the JWT (`syncSellerDashboardEventToAuthSession`) before calling.
+ */
+export const ensureSellerSwapRegistrationStub = async (
+  sellerId: string,
+  eventId: string
+): Promise<void> => {
+  const existing = await getSellerSwapRegistration(sellerId, eventId);
+  if (existing) return;
+  const { error } = await supabase.from('seller_swap_registrations').insert({
+    event_id: eventId,
+    seller_id: sellerId,
+    registration_data: {},
+    is_complete: false,
+  });
+  if (error) throw error;
+};
+
 export const getSellerSwapRegistration = async (
   sellerId: string,
   eventId: string

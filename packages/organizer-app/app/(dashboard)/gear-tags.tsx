@@ -1,4 +1,18 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, Switch, Pressable, Platform, useWindowDimensions } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  Switch,
+  Pressable,
+  Platform,
+  useWindowDimensions,
+  Image,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -17,14 +31,18 @@ import {
   AVAILABLE_QR_CODE_FIELDS,
   getQRCodeFieldsByCategory,
   sanitizeGearTagTemplatePriceSemantics,
+  tagFieldWithSanitizedDecorations,
   collectForbiddenShadowPriceTagFieldNames,
+  defaultTagFieldForItemListPrice,
   isForbiddenShadowPriceTagFieldName,
   GEAR_TAG_ITEM_LIST_PRICE_FIELD,
+  FORM_CONTROL_MAX_WIDTH,
   type GearTagTemplate,
   type TagField,
   type TagFieldDataType,
   type TagLayoutType,
   type QRCodePosition,
+  type TagPrintOrientation,
 } from 'shared';
 import { useState, useEffect, useCallback } from 'react';
 import TagPreviewMockup from '../../components/TagPreviewMockup';
@@ -32,7 +50,8 @@ import { OrganizerBreadcrumbs, type OrganizerBreadcrumbItem } from '../../compon
 import { cardShadow } from '../../lib/theme';
 
 const DESKTOP_BREAKPOINT = 1100;
-const STICKY_PREVIEW_BREAKPOINT = 1320;
+/** When the window is at least this wide, default tag-field pickers use three columns instead of two. */
+const TAG_FIELD_PICK_GRID_WIDE_BREAKPOINT = 680;
 
 const QR_POSITIONS: { value: QRCodePosition; label: string }[] = [
   { value: 'top-left', label: 'Top Left' },
@@ -41,6 +60,12 @@ const QR_POSITIONS: { value: QRCodePosition; label: string }[] = [
   { value: 'bottom-right', label: 'Bottom Right' },
   { value: 'center', label: 'Center' },
 ];
+
+function orientationFromDimensions(widthMm: string, heightMm: string): TagPrintOrientation {
+  const w = parseFloat(widthMm) || 0;
+  const h = parseFloat(heightMm) || 0;
+  return w > h ? 'landscape' : 'portrait';
+}
 
 // Common item fields that can appear on tags
 const TAG_FIELD_DATA_TYPES: { value: TagFieldDataType; label: string }[] = [
@@ -92,6 +117,22 @@ function sanitizeTagFieldsForPersist(fields: TagField[]): TagField[] {
   });
 }
 
+/** Quick-pick symbols for tag lines (emoji render everywhere; use image URL for vector clip art). */
+const TAG_LINE_CLIPART_CHIPS = [
+  '⭐',
+  '❄️',
+  '⛷️',
+  '🎿',
+  '🚲',
+  '⚽',
+  '🎸',
+  '❤️',
+  '✓',
+  '🏷️',
+  '🔖',
+  '🧢',
+];
+
 const AVAILABLE_FIELDS = [
   { name: 'item_number', label: 'Item Number', defaultLabel: 'Item #' },
   { name: 'category', label: 'Category' },
@@ -105,6 +146,17 @@ const AVAILABLE_FIELDS = [
   { name: 'seller_name', label: 'Seller Name' },
   { name: 'donate_if_unsold', label: 'Donate if Unsold' },
 ];
+
+const DEFAULT_REDUCED_PRICE_TAG_FIELD: TagField = {
+  field: 'reduced_price',
+  label: 'Reduced Price',
+  maxLength: 30,
+  fontSize: 10,
+  fontWeight: 'normal',
+  required: false,
+  dataType: 'number',
+  format: '$%.2f',
+};
 
 function CollapsibleSection({
   title,
@@ -162,7 +214,7 @@ const collapsibleStyles = StyleSheet.create({
 export default function GearTagsScreen() {
   const getDefaultExpandedSections = (): Record<string, boolean> => ({
     printerSize: false,
-    tagFields: false,
+    tagFields: true,
     categories: false,
     qrCode: false,
     defaultTemplate: false,
@@ -170,7 +222,22 @@ export default function GearTagsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
-  const useStickyPreview = width >= STICKY_PREVIEW_BREAKPOINT;
+  const tagFieldPickWideGrid = width >= TAG_FIELD_PICK_GRID_WIDE_BREAKPOINT;
+  /** Horizontal padding on `templatesList` (20 + 20). */
+  const TEMPLATE_LIST_H_PAD = 40;
+  const TEMPLATE_TILE_GRID_GAP = 10;
+  /** More columns on wide desktop so more tags fit without scrolling. */
+  const templateListColumnCount = isDesktop ? (width >= 1240 ? 3 : 2) : 1;
+  const desktopTemplateTileWidth =
+    isDesktop && templateListColumnCount >= 1
+      ? Math.max(
+          200,
+          Math.floor(
+            (width - TEMPLATE_LIST_H_PAD - TEMPLATE_TILE_GRID_GAP * (templateListColumnCount - 1)) /
+              templateListColumnCount
+          )
+        )
+      : null;
   const { user } = useAuth();
   const { organization } = useAdminOrganization(user?.id || null);
   const { adminUser, loading: adminUserLoading } = useAdminUser(user?.id ?? null);
@@ -208,9 +275,12 @@ export default function GearTagsScreen() {
     borderWidth: '0.5',
     qrCodeSize: '15',
     qrCodePosition: 'bottom-right' as QRCodePosition,
+    qrCodeOffsetXMm: '0',
+    qrCodeOffsetYMm: '0',
     qrCodeEnabled: true, // QR codes are always enabled on sticker tags
     qrCodeDataFields: ['item_number'] as string[],
     qrCodeSellerAccess: [] as string[],
+    tagOrientation: 'portrait' as TagPrintOrientation,
     isDefault: false,
   });
 
@@ -273,7 +343,10 @@ export default function GearTagsScreen() {
       // The row is created when the user hits Save with valid tag fields.
       setEditingTemplate(null);
       setSelectedBrand(undefined);
-      const seeded = sanitizeGearTagTemplatePriceSemantics([], []);
+      const seeded = sanitizeGearTagTemplatePriceSemantics(
+        [defaultTagFieldForItemListPrice(), DEFAULT_REDUCED_PRICE_TAG_FIELD],
+        [GEAR_TAG_ITEM_LIST_PRICE_FIELD]
+      );
       setFormData({
         name,
         layoutType: 'standard',
@@ -288,9 +361,12 @@ export default function GearTagsScreen() {
         borderWidth: '0.5',
         qrCodeSize: '15',
         qrCodePosition: 'bottom-right',
+        qrCodeOffsetXMm: '0',
+        qrCodeOffsetYMm: '0',
         qrCodeEnabled: true,
         qrCodeDataFields: ['item_number'],
         qrCodeSellerAccess: [],
+        tagOrientation: 'portrait',
         isDefault: false,
       });
       setExpandedSections(getDefaultExpandedSections());
@@ -318,9 +394,12 @@ export default function GearTagsScreen() {
       borderWidth: '0.5',
       qrCodeSize: '15',
       qrCodePosition: 'bottom-right',
+      qrCodeOffsetXMm: '0',
+      qrCodeOffsetYMm: '0',
       qrCodeEnabled: true,
       qrCodeDataFields: ['item_number'], // Default: only item number
       qrCodeSellerAccess: [], // Default: sellers can't see QR code data (org users only)
+      tagOrientation: 'portrait',
       isDefault: false,
     });
     setShowAddForm(false);
@@ -380,7 +459,9 @@ export default function GearTagsScreen() {
       return;
     }
 
-    const sanitized = sanitizeTagFieldsForPersist(formData.tagFields);
+    const sanitized = sanitizeTagFieldsForPersist(
+      formData.tagFields.map((tf) => tagFieldWithSanitizedDecorations(tf))
+    );
     const { tagFields: tagFieldsForApi, requiredFields: requiredFieldsForApi } =
       sanitizeGearTagTemplatePriceSemantics(sanitized, formData.requiredFields);
 
@@ -401,9 +482,12 @@ export default function GearTagsScreen() {
           borderWidth: parseFloat(formData.borderWidth),
           qrCodeSize: parseFloat(formData.qrCodeSize),
           qrCodePosition: formData.qrCodePosition,
+          qrCodeOffsetXMm: parseFloat(formData.qrCodeOffsetXMm) || 0,
+          qrCodeOffsetYMm: parseFloat(formData.qrCodeOffsetYMm) || 0,
           qrCodeEnabled: formData.qrCodeEnabled,
           qrCodeDataFields: formData.qrCodeDataFields,
           qrCodeSellerAccess: formData.qrCodeSellerAccess,
+          tagOrientation: formData.tagOrientation,
           isDefault: formData.isDefault,
         });
       } else {
@@ -420,8 +504,12 @@ export default function GearTagsScreen() {
           borderWidth: parseFloat(formData.borderWidth),
           qrCodeSize: parseFloat(formData.qrCodeSize),
           qrCodePosition: formData.qrCodePosition,
+          qrCodeOffsetXMm: parseFloat(formData.qrCodeOffsetXMm) || 0,
+          qrCodeOffsetYMm: parseFloat(formData.qrCodeOffsetYMm) || 0,
+          qrCodeEnabled: formData.qrCodeEnabled,
           qrCodeDataFields: formData.qrCodeDataFields,
           qrCodeSellerAccess: formData.qrCodeSellerAccess,
+          tagOrientation: formData.tagOrientation,
           isDefault: formData.isDefault,
         });
       }
@@ -481,12 +569,17 @@ export default function GearTagsScreen() {
       fontFamily: template.fontFamily,
       fontSize: String(template.fontSize),
       borderWidth: String(template.borderWidth),
-          qrCodeSize: String(template.qrCodeSize),
-          qrCodePosition: template.qrCodePosition,
-          qrCodeEnabled: template.qrCodeEnabled,
-          qrCodeDataFields: template.qrCodeDataFields || ['item_number'],
-          qrCodeSellerAccess: template.qrCodeSellerAccess || [],
-          isDefault: template.isDefault,
+      qrCodeSize: String(template.qrCodeSize),
+      qrCodePosition: template.qrCodePosition,
+      qrCodeOffsetXMm: String(template.qrCodeOffsetXMm ?? 0),
+      qrCodeOffsetYMm: String(template.qrCodeOffsetYMm ?? 0),
+      qrCodeEnabled: template.qrCodeEnabled,
+      qrCodeDataFields: template.qrCodeDataFields || ['item_number'],
+      qrCodeSellerAccess: template.qrCodeSellerAccess || [],
+      tagOrientation:
+        template.tagOrientation ??
+        orientationFromDimensions(String(template.widthMm), String(template.heightMm)),
+      isDefault: template.isDefault,
     });
     setShowAddForm(true);
   };
@@ -580,17 +673,33 @@ export default function GearTagsScreen() {
   };
 
   const updateTagField = (index: number, updates: Partial<TagField>) => {
-    const newFields = [...formData.tagFields];
-    newFields[index] = { ...newFields[index], ...updates };
-    setFormData({ ...formData, tagFields: newFields });
+    setFormData((prev) => {
+      const newFields = [...prev.tagFields];
+      const current = newFields[index];
+      if (!current) return prev;
+      newFields[index] = { ...current, ...updates };
+      return { ...prev, tagFields: newFields };
+    });
   };
 
   const moveTagField = (index: number, direction: 'up' | 'down') => {
-    const newFields = [...formData.tagFields];
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= newFields.length) return;
-    [newFields[index], newFields[newIndex]] = [newFields[newIndex], newFields[index]];
-    setFormData({ ...formData, tagFields: newFields });
+    setFormData((prev) => {
+      const newFields = [...prev.tagFields];
+      const newIndex = direction === 'up' ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= newFields.length) return prev;
+      [newFields[index], newFields[newIndex]] = [newFields[newIndex], newFields[index]];
+      return { ...prev, tagFields: newFields };
+    });
+  };
+
+  const bumpQrOffset = (deltaXMm: number, deltaYMm: number) => {
+    setFormData((prev) => {
+      const x = parseFloat(prev.qrCodeOffsetXMm) || 0;
+      const y = parseFloat(prev.qrCodeOffsetYMm) || 0;
+      const nx = Math.max(-15, Math.min(15, Math.round((x + deltaXMm) * 10) / 10));
+      const ny = Math.max(-15, Math.min(15, Math.round((y + deltaYMm) * 10) / 10));
+      return { ...prev, qrCodeOffsetXMm: String(nx), qrCodeOffsetYMm: String(ny) };
+    });
   };
 
   const removeTagField = (index: number) => {
@@ -716,6 +825,11 @@ export default function GearTagsScreen() {
       const base = tf.dropdownOptions?.length ? [...tf.dropdownOptions] : [''];
       updateTagField(index, { dropdownOptions: [...base, ''] });
     };
+    const adjustFieldFontSize = (delta: number) => {
+      const current = Number(tf.fontSize ?? 10);
+      const next = Math.min(40, Math.max(6, current + delta));
+      updateTagField(index, { fontSize: Math.round(next * 10) / 10 });
+    };
 
     const finalizeTagFieldEditor = () => setTagFieldEditKey(null);
 
@@ -743,6 +857,68 @@ export default function GearTagsScreen() {
             onValueChange={(val) => updateTagField(index, { hideLabelOnTag: val })}
           />
         </View>
+        <View style={styles.formField}>
+          <Text style={styles.smallLabel}>Tag line clip art, emoji, or image</Text>
+          <Text style={styles.helpText}>
+            Optional decoration before this line on the preview. Tap a symbol, paste any emoji, or paste an HTTPS image
+            URL from a library (for example OpenMoji or a Twemoji CDN). Thermal tags print emoji when the font supports it;
+            linked images are shown in digital previews.
+          </Text>
+          <View style={styles.clipartChipWrap}>
+            {TAG_LINE_CLIPART_CHIPS.map((sym) => (
+              <Pressable
+                key={sym}
+                onPress={() => updateTagField(index, { tagLineEmoji: sym })}
+                style={({ pressed }) => [styles.clipartChip, pressed && { opacity: 0.78 }]}
+                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+              >
+                <Text style={styles.clipartChipText}>{sym}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.smallLabel}>Custom emoji</Text>
+          <TextInput
+            style={styles.smallInput}
+            value={tf.tagLineEmoji ?? ''}
+            onChangeText={(text) => updateTagField(index, { tagLineEmoji: text })}
+            placeholder="Paste or type emoji"
+            returnKeyType="done"
+            blurOnSubmit
+            onSubmitEditing={finalizeTagFieldEditor}
+          />
+          <Text style={[styles.smallLabel, { marginTop: 10 }]}>Image URL (https only)</Text>
+          <TextInput
+            style={styles.smallInput}
+            value={tf.tagLineImageUrl ?? ''}
+            onChangeText={(text) => updateTagField(index, { tagLineImageUrl: text })}
+            placeholder="https://…"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            returnKeyType="done"
+            blurOnSubmit
+            onSubmitEditing={finalizeTagFieldEditor}
+          />
+          {Boolean((tf.tagLineEmoji ?? '').trim() || (tf.tagLineImageUrl ?? '').trim()) ? (
+            <View style={styles.decoPreviewRow}>
+              {(tf.tagLineImageUrl ?? '').trim().startsWith('https://') ? (
+                <Image
+                  source={{ uri: (tf.tagLineImageUrl ?? '').trim() }}
+                  style={styles.decoPreviewImg}
+                  resizeMode="contain"
+                />
+              ) : null}
+              <Text style={styles.decoPreviewEmoji}>{(tf.tagLineEmoji ?? '').trim()}</Text>
+              <Pressable
+                onPress={() => updateTagField(index, { tagLineEmoji: undefined, tagLineImageUrl: undefined })}
+                style={({ pressed }) => [styles.clearDecoButton, pressed && { opacity: 0.75 }]}
+                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+              >
+                <Text style={styles.clearDecoButtonText}>Clear decorations</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
         <View style={styles.formRow}>
           <View style={[styles.formField, styles.halfWidth]}>
             <Text style={styles.smallLabel}>Max characters</Text>
@@ -760,15 +936,35 @@ export default function GearTagsScreen() {
           </View>
           <View style={[styles.formField, styles.halfWidth]}>
             <Text style={styles.smallLabel}>Font size</Text>
-            <TextInput
-              style={styles.smallInput}
-              value={String(tf.fontSize ?? 10)}
-              onChangeText={(text) => updateTagField(index, { fontSize: parseFloat(text) || 10 })}
-              keyboardType="decimal-pad"
-              returnKeyType="done"
-              blurOnSubmit
-              onSubmitEditing={finalizeTagFieldEditor}
-            />
+            <View style={styles.sizeAdjustRow}>
+              <TouchableOpacity
+                style={styles.sizeAdjustButton}
+                onPress={() => adjustFieldFontSize(-1)}
+                accessibilityRole="button"
+                accessibilityLabel="Decrease font size"
+                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+              >
+                <Text style={styles.sizeAdjustButtonText}>-</Text>
+              </TouchableOpacity>
+              <TextInput
+                style={[styles.smallInput, styles.sizeAdjustInput]}
+                value={String(tf.fontSize ?? 10)}
+                onChangeText={(text) => updateTagField(index, { fontSize: parseFloat(text) || 10 })}
+                keyboardType="decimal-pad"
+                returnKeyType="done"
+                blurOnSubmit
+                onSubmitEditing={finalizeTagFieldEditor}
+              />
+              <TouchableOpacity
+                style={styles.sizeAdjustButton}
+                onPress={() => adjustFieldFontSize(1)}
+                accessibilityRole="button"
+                accessibilityLabel="Increase font size"
+                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+              >
+                <Text style={styles.sizeAdjustButtonText}>+</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
         <View style={styles.formField}>
@@ -944,15 +1140,36 @@ export default function GearTagsScreen() {
               {editingTemplate ? 'Configure Tag' : 'New Tag Template'}
             </Text>
 
-            <View style={isDesktop ? styles.formLayoutDesktop : styles.formLayoutMobile}>
-              {/* Left column: scrollable on desktop (for sticky preview), passes through on mobile */}
-              <ScrollView
-                style={isDesktop ? styles.formConfigScroll : undefined}
-                contentContainerStyle={isDesktop ? styles.formConfigContent : undefined}
-                scrollEnabled={isDesktop}
-                showsVerticalScrollIndicator={isDesktop}
-                nestedScrollEnabled={Platform.OS === 'android'}
-              >
+            <TagPreviewMockup
+              widthMm={parseFloat(formData.widthMm) || 50}
+              heightMm={parseFloat(formData.heightMm) || 30}
+              tagFields={formData.tagFields}
+              qrCodePosition={formData.qrCodePosition}
+              qrCodeSize={parseFloat(formData.qrCodeSize) || 15}
+              qrCodeOffsetXMm={parseFloat(formData.qrCodeOffsetXMm) || 0}
+              qrCodeOffsetYMm={parseFloat(formData.qrCodeOffsetYMm) || 0}
+              tagOrientation={formData.tagOrientation}
+              availableFields={AVAILABLE_FIELDS}
+              interactive
+              onUpdateTagField={updateTagField}
+              onMoveField={(index, direction) => moveTagField(index, direction)}
+              onQrSizeDelta={(d) => {
+                setFormData((prev) => {
+                  const current = parseFloat(prev.qrCodeSize) || 15;
+                  const next = Math.max(6, Math.min(60, current + d));
+                  return { ...prev, qrCodeSize: String(next) };
+                });
+              }}
+              onQrOffsetDelta={bumpQrOffset}
+            />
+
+            <ScrollView
+              style={isDesktop ? styles.formConfigScroll : undefined}
+              contentContainerStyle={isDesktop ? styles.formConfigContent : undefined}
+              scrollEnabled={isDesktop}
+              showsVerticalScrollIndicator={isDesktop}
+              nestedScrollEnabled={Platform.OS === 'android'}
+            >
                 <View style={styles.formField}>
                   <Text style={styles.label}>Tag Nickname *</Text>
                   <TextInput
@@ -976,96 +1193,118 @@ export default function GearTagsScreen() {
                       removed. Do not add custom fields named like "price" or "asking_price" — they are blocked so the
                       tag cannot show a second number that disagrees with the stored price on the item.
                     </Text>
+                    <View style={styles.tagFieldPickGrid}>
+                      {AVAILABLE_FIELDS.map((field) => {
+                        const orderIndex = formData.tagFields.findIndex((tf) => tf.field === field.name);
+                        const onTag = orderIndex >= 0;
+                        const isRequired = formData.requiredFields.includes(field.name);
+                        const isFixedListPrice = field.name === GEAR_TAG_ITEM_LIST_PRICE_FIELD;
+                        return (
+                          <View
+                            key={field.name}
+                            style={[styles.tagFieldPickCell, tagFieldPickWideGrid && styles.tagFieldPickCellDesktop]}
+                          >
+                            <View style={[styles.tagFieldPickCard, onTag && styles.tagFieldPickCardOnTag]}>
+                              <Pressable
+                                style={styles.tagFieldPickLabelPress}
+                                onPress={() => {
+                                  if (isFixedListPrice && onTag) {
+                                    const msg =
+                                      'Original Price stays on every tag because it must match the price stored on the item in the system.';
+                                    if (Platform.OS === 'web') {
+                                      window.alert(msg);
+                                    } else {
+                                      Alert.alert('Original Price', msg);
+                                    }
+                                    return;
+                                  }
+                                  toggleDefaultFieldOnTag(field.name);
+                                }}
+                                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                              >
+                                <Text style={styles.tagFieldPickTitle} numberOfLines={2}>
+                                  {field.label}
+                                </Text>
+                                {onTag ? (
+                                  <Text style={styles.tagFieldPickHintOn}>On tag · #{orderIndex + 1}</Text>
+                                ) : (
+                                  <Text style={styles.tagFieldPickHintOff}>Tap to add</Text>
+                                )}
+                              </Pressable>
+                              <View style={styles.tagFieldPickToolbar}>
+                                <View style={styles.tagFieldPickToolbarLeft}>
+                                  {onTag ? (
+                                    <View style={styles.tagFieldPickCluster}>
+                                      <TouchableOpacity
+                                        onPress={() => moveFieldByFieldName(field.name, 'up')}
+                                        disabled={orderIndex === 0}
+                                        style={[
+                                          styles.tagFieldPickReorder,
+                                          orderIndex === 0 && styles.reorderButtonDisabled,
+                                        ]}
+                                      >
+                                        <Text style={styles.tagFieldPickReorderText}>↑</Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity
+                                        onPress={() => moveFieldByFieldName(field.name, 'down')}
+                                        disabled={orderIndex === formData.tagFields.length - 1}
+                                        style={[
+                                          styles.tagFieldPickReorder,
+                                          orderIndex === formData.tagFields.length - 1 &&
+                                            styles.reorderButtonDisabled,
+                                        ]}
+                                      >
+                                        <Text style={styles.tagFieldPickReorderText}>↓</Text>
+                                      </TouchableOpacity>
+                                    </View>
+                                  ) : null}
+                                  {onTag ? (
+                                    <TouchableOpacity
+                                      style={styles.tagFieldPickEdit}
+                                      onPress={() =>
+                                        setTagFieldEditKey((k) => (k === field.name ? null : field.name))
+                                      }
+                                      activeOpacity={0.85}
+                                      {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                                    >
+                                      <Text style={styles.tagFieldPickEditText}>Edit</Text>
+                                    </TouchableOpacity>
+                                  ) : null}
+                                </View>
+                                <Pressable
+                                  style={({ pressed }) => [
+                                    styles.tagFieldPickStarWrap,
+                                    pressed && { opacity: 0.65 },
+                                  ]}
+                                  onPress={() => setFieldRequired(field.name, !isRequired)}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={
+                                    isRequired ? 'Required. Tap to make optional.' : 'Optional. Tap to require.'
+                                  }
+                                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.tagFieldPickStarText,
+                                      isRequired ? styles.fieldRequiredStarRed : styles.fieldRequiredStarGrey,
+                                    ]}
+                                  >
+                                    *
+                                  </Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
                     {AVAILABLE_FIELDS.map((field) => {
                       const orderIndex = formData.tagFields.findIndex((tf) => tf.field === field.name);
                       const onTag = orderIndex >= 0;
-                      const isRequired = formData.requiredFields.includes(field.name);
-                      const isFixedListPrice = field.name === GEAR_TAG_ITEM_LIST_PRICE_FIELD;
+                      if (!onTag || tagFieldEditKey !== field.name || orderIndex < 0) return null;
                       return (
-                        <View key={field.name}>
-                          <View style={[styles.tagFieldPillRow, onTag && styles.tagFieldPillRowOnTag]}>
-                            <Pressable
-                              style={styles.tagFieldPillLabelPress}
-                              onPress={() => {
-                                if (isFixedListPrice && onTag) {
-                                  const msg =
-                                    'Original Price stays on every tag because it must match the price stored on the item in the system.';
-                                  if (Platform.OS === 'web') {
-                                    window.alert(msg);
-                                  } else {
-                                    Alert.alert('Original Price', msg);
-                                  }
-                                  return;
-                                }
-                                toggleDefaultFieldOnTag(field.name);
-                              }}
-                              {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
-                            >
-                              <Text style={styles.tagFieldPillLabelText}>{field.label}</Text>
-                              {onTag ? (
-                                <Text style={styles.tagFieldPillOrderHint}>On tag · order {orderIndex + 1}</Text>
-                              ) : (
-                                <Text style={styles.tagFieldPillOrderHintMuted}>Tap to add to tag</Text>
-                              )}
-                            </Pressable>
-                            {onTag ? (
-                              <View style={styles.tagFieldPillReorder}>
-                                <TouchableOpacity
-                                  onPress={() => moveFieldByFieldName(field.name, 'up')}
-                                  disabled={orderIndex === 0}
-                                  style={[styles.reorderButton, orderIndex === 0 && styles.reorderButtonDisabled]}
-                                >
-                                  <Text style={styles.reorderButtonText}>↑</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  onPress={() => moveFieldByFieldName(field.name, 'down')}
-                                  disabled={orderIndex === formData.tagFields.length - 1}
-                                  style={[
-                                    styles.reorderButton,
-                                    orderIndex === formData.tagFields.length - 1 && styles.reorderButtonDisabled,
-                                  ]}
-                                >
-                                  <Text style={styles.reorderButtonText}>↓</Text>
-                                </TouchableOpacity>
-                              </View>
-                            ) : null}
-                            {onTag ? (
-                              <TouchableOpacity
-                                style={styles.tagFieldEditButton}
-                                onPress={() =>
-                                  setTagFieldEditKey((k) => (k === field.name ? null : field.name))
-                                }
-                                activeOpacity={0.85}
-                                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
-                              >
-                                <Text style={styles.tagFieldEditButtonText}>Edit</Text>
-                              </TouchableOpacity>
-                            ) : null}
-                            <Pressable
-                              style={({ pressed }) => [
-                                styles.fieldRequiredStarWrap,
-                                pressed && { opacity: 0.65 },
-                              ]}
-                              onPress={() => setFieldRequired(field.name, !isRequired)}
-                              accessibilityRole="button"
-                              accessibilityLabel={
-                                isRequired ? 'Required. Tap to make optional.' : 'Optional. Tap to require.'
-                              }
-                              {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
-                            >
-                              <Text
-                                style={[
-                                  styles.fieldRequiredStarText,
-                                  isRequired ? styles.fieldRequiredStarRed : styles.fieldRequiredStarGrey,
-                                ]}
-                              >
-                                *
-                              </Text>
-                            </Pressable>
-                          </View>
-                          {onTag && tagFieldEditKey === field.name && orderIndex >= 0
-                            ? renderTagFieldEditor(orderIndex)
-                            : null}
+                        <View key={`${field.name}-editor`} style={styles.tagFieldPickEditorSlot}>
+                          {renderTagFieldEditor(orderIndex)}
                         </View>
                       );
                     })}
@@ -1090,17 +1329,6 @@ export default function GearTagsScreen() {
                       />
                     ) : null}
 
-                    {!isDesktop && formData.tagFields.length > 0 && (
-                      <TagPreviewMockup
-                        widthMm={parseFloat(formData.widthMm) || 50}
-                        heightMm={parseFloat(formData.heightMm) || 30}
-                        tagFields={formData.tagFields}
-                        qrCodePosition={formData.qrCodePosition}
-                        qrCodeSize={parseFloat(formData.qrCodeSize) || 15}
-                        availableFields={AVAILABLE_FIELDS}
-                      />
-                    )}
-
                     {formData.tagFields
                       .map((field, index) => ({ field, index }))
                       .filter(({ field }) => !AVAILABLE_FIELDS.some((f) => f.name === field.field))
@@ -1112,36 +1340,11 @@ export default function GearTagsScreen() {
                             key={`${field.field}-${index}`}
                             style={[styles.tagFieldCard, editorOpen && styles.tagFieldCardSelected]}
                           >
-                            <View style={styles.tagFieldHeader}>
-                              <Text style={styles.tagFieldName}>{field.label || field.field}</Text>
-                              <View style={styles.tagFieldActions}>
-                                <TouchableOpacity
-                                  style={styles.tagFieldEditButton}
-                                  onPress={() =>
-                                    setTagFieldEditKey((k) => (k === field.field ? null : field.field))
-                                  }
-                                  activeOpacity={0.85}
-                                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
-                                >
-                                  <Text style={styles.tagFieldEditButtonText}>Edit</Text>
-                                </TouchableOpacity>
-                                <Pressable
-                                  style={({ pressed }) => [
-                                    styles.fieldRequiredStarWrap,
-                                    pressed && { opacity: 0.65 },
-                                  ]}
-                                  onPress={() => setFieldRequired(field.field, !isRequired)}
-                                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.fieldRequiredStarText,
-                                      isRequired ? styles.fieldRequiredStarRed : styles.fieldRequiredStarGrey,
-                                    ]}
-                                  >
-                                    *
-                                  </Text>
-                                </Pressable>
+                            <Text style={styles.tagFieldName} numberOfLines={2}>
+                              {field.label || field.field}
+                            </Text>
+                            <View style={styles.tagFieldToolbar}>
+                              <View style={styles.tagFieldToolbarCluster}>
                                 <TouchableOpacity
                                   onPress={() => moveTagField(index, 'up')}
                                   disabled={index === 0}
@@ -1159,10 +1362,37 @@ export default function GearTagsScreen() {
                                 >
                                   <Text style={styles.reorderButtonText}>↓</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity onPress={() => removeTagField(index)} style={styles.removeButton}>
-                                  <Text style={styles.removeButtonText}>×</Text>
-                                </TouchableOpacity>
                               </View>
+                              <TouchableOpacity
+                                style={styles.tagFieldEditButton}
+                                onPress={() =>
+                                  setTagFieldEditKey((k) => (k === field.field ? null : field.field))
+                                }
+                                activeOpacity={0.85}
+                                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                              >
+                                <Text style={styles.tagFieldEditButtonText}>Edit</Text>
+                              </TouchableOpacity>
+                              <Pressable
+                                style={({ pressed }) => [
+                                  styles.fieldRequiredStarWrap,
+                                  pressed && { opacity: 0.65 },
+                                ]}
+                                onPress={() => setFieldRequired(field.field, !isRequired)}
+                                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                              >
+                                <Text
+                                  style={[
+                                    styles.fieldRequiredStarText,
+                                    isRequired ? styles.fieldRequiredStarRed : styles.fieldRequiredStarGrey,
+                                  ]}
+                                >
+                                  *
+                                </Text>
+                              </Pressable>
+                              <TouchableOpacity onPress={() => removeTagField(index)} style={styles.removeButton}>
+                                <Text style={styles.removeButtonText}>×</Text>
+                              </TouchableOpacity>
                             </View>
                             {editorOpen ? renderTagFieldEditor(index) : null}
                           </View>
@@ -1252,11 +1482,14 @@ export default function GearTagsScreen() {
                         formData.selectedPresetId === preset.id && styles.sizePresetChipSelected,
                       ]}
                       onPress={() => {
+                        const w = String(preset.widthMm);
+                        const h = String(preset.heightMm);
                         setFormData({
                           ...formData,
                           selectedPresetId: preset.id,
-                          widthMm: String(preset.widthMm),
-                          heightMm: String(preset.heightMm),
+                          widthMm: w,
+                          heightMm: h,
+                          tagOrientation: orientationFromDimensions(w, h),
                         });
                       }}
                     >
@@ -1298,7 +1531,12 @@ export default function GearTagsScreen() {
                   style={styles.textInput}
                   value={formData.widthMm}
                   onChangeText={(text) => {
-                    setFormData({ ...formData, widthMm: text, selectedPresetId: undefined });
+                    setFormData((prev) => ({
+                      ...prev,
+                      widthMm: text,
+                      selectedPresetId: undefined,
+                      tagOrientation: orientationFromDimensions(text, prev.heightMm),
+                    }));
                   }}
                   keyboardType="decimal-pad"
                 />
@@ -1309,10 +1547,89 @@ export default function GearTagsScreen() {
                   style={styles.textInput}
                   value={formData.heightMm}
                   onChangeText={(text) => {
-                    setFormData({ ...formData, heightMm: text, selectedPresetId: undefined });
+                    setFormData((prev) => ({
+                      ...prev,
+                      heightMm: text,
+                      selectedPresetId: undefined,
+                      tagOrientation: orientationFromDimensions(prev.widthMm, text),
+                    }));
                   }}
                   keyboardType="decimal-pad"
                 />
+              </View>
+            </View>
+
+            <View style={styles.formField}>
+              <Text style={styles.label}>Tag orientation (for printing)</Text>
+              <Text style={styles.helpText}>
+                Portrait keeps the tall edge vertical; landscape swaps width and height so the long edge runs
+                horizontally. This is saved on the template for staff when they print.
+              </Text>
+              <View style={styles.orientationChipRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.chip,
+                    formData.tagOrientation === 'portrait' && styles.chipSelected,
+                  ]}
+                  onPress={() => {
+                    setFormData((prev) => {
+                      const w = parseFloat(prev.widthMm) || 0;
+                      const h = parseFloat(prev.heightMm) || 0;
+                      if (w > h) {
+                        return {
+                          ...prev,
+                          widthMm: String(h),
+                          heightMm: String(w),
+                          tagOrientation: 'portrait' as const,
+                          selectedPresetId: undefined,
+                        };
+                      }
+                      return { ...prev, tagOrientation: 'portrait' as const };
+                    });
+                  }}
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      formData.tagOrientation === 'portrait' && styles.chipTextSelected,
+                    ]}
+                  >
+                    Portrait
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.chip,
+                    formData.tagOrientation === 'landscape' && styles.chipSelected,
+                  ]}
+                  onPress={() => {
+                    setFormData((prev) => {
+                      const w = parseFloat(prev.widthMm) || 0;
+                      const h = parseFloat(prev.heightMm) || 0;
+                      if (h > w) {
+                        return {
+                          ...prev,
+                          widthMm: String(h),
+                          heightMm: String(w),
+                          tagOrientation: 'landscape' as const,
+                          selectedPresetId: undefined,
+                        };
+                      }
+                      return { ...prev, tagOrientation: 'landscape' as const };
+                    });
+                  }}
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      formData.tagOrientation === 'landscape' && styles.chipTextSelected,
+                    ]}
+                  >
+                    Landscape
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
                 </CollapsibleSection>
@@ -1359,17 +1676,46 @@ export default function GearTagsScreen() {
             <View style={styles.formField}>
               <Text style={styles.label}>QR Code</Text>
               <Text style={styles.helpText}>
-                Configure size and position. QR codes are always included on sticker tags.
+                Configure size, corner anchor, and fine nudge (same as the preview key). Positive X moves right,
+                positive Y moves down. Offsets are saved for printing.
               </Text>
               <View style={styles.formRow}>
                 <View style={[styles.formField, styles.halfWidth]}>
                   <Text style={styles.smallLabel}>Size (mm)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={formData.qrCodeSize}
-                    onChangeText={(text) => setFormData({ ...formData, qrCodeSize: text })}
-                    keyboardType="decimal-pad"
-                  />
+                  <View style={styles.sizeAdjustRow}>
+                    <TouchableOpacity
+                      style={styles.sizeAdjustButton}
+                      onPress={() => {
+                        const current = parseFloat(formData.qrCodeSize) || 15;
+                        const next = Math.max(6, Math.min(60, current - 1));
+                        setFormData({ ...formData, qrCodeSize: String(next) });
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Decrease QR code size"
+                      {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                    >
+                      <Text style={styles.sizeAdjustButtonText}>-</Text>
+                    </TouchableOpacity>
+                    <TextInput
+                      style={[styles.textInput, styles.sizeAdjustInput]}
+                      value={formData.qrCodeSize}
+                      onChangeText={(text) => setFormData({ ...formData, qrCodeSize: text })}
+                      keyboardType="decimal-pad"
+                    />
+                    <TouchableOpacity
+                      style={styles.sizeAdjustButton}
+                      onPress={() => {
+                        const current = parseFloat(formData.qrCodeSize) || 15;
+                        const next = Math.max(6, Math.min(60, current + 1));
+                        setFormData({ ...formData, qrCodeSize: String(next) });
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Increase QR code size"
+                      {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                    >
+                      <Text style={styles.sizeAdjustButtonText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
                 <View style={[styles.formField, styles.halfWidth]}>
                   <Text style={styles.smallLabel}>Position</Text>
@@ -1395,6 +1741,55 @@ export default function GearTagsScreen() {
                     ))}
                   </ScrollView>
                 </View>
+              </View>
+              <Text style={styles.smallLabel}>Nudge from anchor (0.5 mm)</Text>
+              <Text style={styles.qrOffsetFormReadout}>
+                X {(parseFloat(formData.qrCodeOffsetXMm) || 0).toFixed(1)} · Y{' '}
+                {(parseFloat(formData.qrCodeOffsetYMm) || 0).toFixed(1)}
+              </Text>
+              <View style={styles.qrNudgeRowForm}>
+                <TouchableOpacity
+                  style={styles.sizeAdjustButton}
+                  onPress={() => bumpQrOffset(-0.5, 0)}
+                  accessibilityLabel="Nudge QR left"
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Text style={styles.sizeAdjustButtonText}>←</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.sizeAdjustButton}
+                  onPress={() => bumpQrOffset(0.5, 0)}
+                  accessibilityLabel="Nudge QR right"
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Text style={styles.sizeAdjustButtonText}>→</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.sizeAdjustButton}
+                  onPress={() => bumpQrOffset(0, -0.5)}
+                  accessibilityLabel="Nudge QR up"
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Text style={styles.sizeAdjustButtonText}>↑</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.sizeAdjustButton}
+                  onPress={() => bumpQrOffset(0, 0.5)}
+                  accessibilityLabel="Nudge QR down"
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Text style={styles.sizeAdjustButtonText}>↓</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.sizeAdjustButton}
+                  onPress={() =>
+                    setFormData((prev) => ({ ...prev, qrCodeOffsetXMm: '0', qrCodeOffsetYMm: '0' }))
+                  }
+                  accessibilityLabel="Reset QR nudge"
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Text style={styles.sizeAdjustButtonText}>0</Text>
+                </TouchableOpacity>
               </View>
             </View>
                 </CollapsibleSection>
@@ -1442,33 +1837,7 @@ export default function GearTagsScreen() {
                 )}
               </Pressable>
             </View>
-              </ScrollView>
-
-              {/* Right column: sticky tag preview (desktop only) */}
-              {isDesktop && (
-                <View
-                  style={[
-                    styles.stickyPreviewColumn,
-                    useStickyPreview ? styles.stickyPreviewPinned : styles.stickyPreviewInline,
-                  ]}
-                >
-                  {formData.tagFields.length > 0 ? (
-                    <TagPreviewMockup
-                      widthMm={parseFloat(formData.widthMm) || 50}
-                      heightMm={parseFloat(formData.heightMm) || 30}
-                      tagFields={formData.tagFields}
-                      qrCodePosition={formData.qrCodePosition}
-                      qrCodeSize={parseFloat(formData.qrCodeSize) || 15}
-                      availableFields={AVAILABLE_FIELDS}
-                    />
-                  ) : (
-                    <View style={styles.previewPlaceholder}>
-                      <Text style={styles.previewPlaceholderText}>Add tag fields to see preview</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
+            </ScrollView>
           </View>
         ) : showCreateOptions ? (
           /* Create Options Selection */
@@ -1520,7 +1889,7 @@ export default function GearTagsScreen() {
         ) : (
           <>
             {/* Create New Tag Button */}
-            <View style={styles.createButtonContainer}>
+            <View style={[styles.createButtonContainer, isDesktop && styles.createButtonContainerDesktop]}>
             <Pressable
               onPress={createNewTag}
               disabled={creatingTag}
@@ -1540,48 +1909,78 @@ export default function GearTagsScreen() {
 
             {/* Existing Tags List */}
             {templates.length > 0 && (
-              <View style={styles.templatesList}>
-                <Text style={styles.sectionTitle}>Existing Tags</Text>
+              <View style={[styles.templatesList, isDesktop && styles.templatesListDesktop]}>
+                <Text style={[styles.sectionTitle, isDesktop && styles.sectionTitleTight]}>Existing Tags</Text>
+                <View style={isDesktop ? styles.templateTileGrid : undefined}>
                 {templates.map((template) => (
-                  <View key={template.id} style={styles.templateLink}>
-                    <TouchableOpacity
-                      style={styles.templateLinkTouchable}
-                      onPress={() => handleEdit(template)}
-                      activeOpacity={0.7}
+                  <View
+                    key={template.id}
+                    style={[
+                      styles.templateLink,
+                      isDesktop && styles.templateLinkDesktop,
+                      isDesktop && desktopTemplateTileWidth != null && { width: desktopTemplateTileWidth },
+                    ]}
+                  >
+                    <View
+                      style={[styles.templateLinkTouchable, isDesktop && styles.templateLinkTouchableDense]}
                     >
                       <View style={styles.templateLinkContent}>
                         <View style={styles.templateLinkLeft}>
-                          <Text style={styles.templateLinkName}>{template.name}</Text>
-                          {template.isDefault && (
-                            <Text style={styles.defaultBadge}>Default</Text>
-                          )}
-                          {!template.isActive && (
-                            <Text style={styles.inactiveBadge}>Inactive</Text>
-                          )}
+                          <Text style={styles.templateLinkName} numberOfLines={1}>
+                            {template.name}
+                          </Text>
+                          {template.isDefault && <Text style={styles.defaultBadge}>Default</Text>}
+                          {!template.isActive && <Text style={styles.inactiveBadge}>Inactive</Text>}
                         </View>
-                        <Text style={styles.templateLinkArrow}>→</Text>
                       </View>
-                      {template.description && (
-                        <Text style={styles.templateLinkDescription}>{template.description}</Text>
-                      )}
-                    </TouchableOpacity>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.templateDeleteButton,
-                        pressed && { opacity: 0.7 },
-                      ]}
-                      onPress={(e) => {
-                        console.log('[GearTags] Delete button onPress fired for template', { templateId: template.id, templateName: template.name });
-                        if (typeof (e as unknown as { stopPropagation?: () => void }).stopPropagation === 'function') {
-                          (e as unknown as { stopPropagation: () => void }).stopPropagation();
-                        }
-                        handleDelete(template);
-                      }}
-                    >
-                      <Text style={styles.deleteButtonText}>Delete</Text>
-                    </Pressable>
+                      {template.description ? (
+                        <Text style={styles.templateLinkDescription} numberOfLines={2}>
+                          {template.description}
+                        </Text>
+                      ) : null}
+                      {template.tagFields.length > 0 ? (
+                        <View style={[styles.templatePreviewWrap, isDesktop && styles.templatePreviewWrapDense]}>
+                          <TagPreviewMockup
+                            widthMm={template.widthMm}
+                            heightMm={template.heightMm}
+                            tagFields={template.tagFields}
+                            qrCodePosition={template.qrCodePosition}
+                            qrCodeSize={template.qrCodeSize}
+                            qrCodeOffsetXMm={template.qrCodeOffsetXMm ?? 0}
+                            qrCodeOffsetYMm={template.qrCodeOffsetYMm ?? 0}
+                            tagOrientation={template.tagOrientation}
+                            availableFields={AVAILABLE_FIELDS}
+                            embeddedInList
+                          />
+                        </View>
+                      ) : null}
+                      <View style={[styles.templateActionRow, isDesktop && styles.templateActionRowDense]}>
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.templateEditButton,
+                            pressed && { opacity: 0.8 },
+                          ]}
+                          onPress={() => handleEdit(template)}
+                        >
+                          <Text style={styles.templateEditButtonText}>Edit</Text>
+                        </Pressable>
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.templateDeleteButton,
+                            pressed && { opacity: 0.7 },
+                          ]}
+                          onPress={() => {
+                            console.log('[GearTags] Delete button onPress fired for template', { templateId: template.id, templateName: template.name });
+                            handleDelete(template);
+                          }}
+                        >
+                          <Text style={styles.deleteButtonText}>Delete</Text>
+                        </Pressable>
+                      </View>
+                    </View>
                   </View>
                 ))}
+                </View>
               </View>
             )}
 
@@ -1665,29 +2064,13 @@ const styles = StyleSheet.create({
     maxWidth: 1400,
     alignSelf: 'center',
   },
-  formLayoutDesktop: {
-    flexDirection: 'row',
-    gap: 24,
-    alignItems: 'flex-start',
-  },
-  formLayoutMobile: {},
   formConfigScroll: {
-    flex: 1,
+    flexGrow: 1,
     minWidth: 0,
-    maxWidth: 600,
+    width: '100%',
   },
   formConfigContent: {
     paddingBottom: 24,
-  },
-  stickyPreviewColumn: {
-    width: 320,
-    flexShrink: 0,
-  },
-  stickyPreviewPinned: {
-    ...(Platform.OS === 'web' && ({ position: 'sticky', top: 24 } as any)),
-  },
-  stickyPreviewInline: {
-    position: 'relative',
   },
   previewPlaceholder: {
     backgroundColor: '#F5F5F5',
@@ -1750,6 +2133,50 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E5E5',
   },
+  sizeAdjustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sizeAdjustButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#F0F4F8',
+    borderWidth: 1,
+    borderColor: '#D8E1EA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sizeAdjustButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    lineHeight: 18,
+  },
+  sizeAdjustInput: {
+    flex: 1,
+    textAlign: 'center',
+  },
+  orientationChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+  },
+  qrOffsetFormReadout: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && { fontVariantNumeric: 'tabular-nums' as const }),
+  },
+  qrNudgeRowForm: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+  },
   chip: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1800,7 +2227,7 @@ const styles = StyleSheet.create({
   tagFieldCard: {
     backgroundColor: '#F5F5F5',
     borderRadius: 8,
-    padding: 12,
+    padding: 10,
     marginBottom: 8,
   },
   tagFieldCardSelected: {
@@ -1808,21 +2235,28 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#007AFF',
   },
-  tagFieldHeader: {
+  tagFieldToolbar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E0E0E0',
   },
-  tagFieldActions: {
+  tagFieldToolbarCluster: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
   reorderButton: {
-    padding: 4,
-    minWidth: 32,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    minWidth: 28,
+    minHeight: 28,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#E5E5E5',
     borderRadius: 6,
   },
@@ -1830,7 +2264,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   reorderButtonText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: '#666',
   },
@@ -1840,10 +2274,13 @@ const styles = StyleSheet.create({
     color: '#1A1A1A',
   },
   removeButton: {
-    padding: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minHeight: 28,
+    justifyContent: 'center',
   },
   removeButtonText: {
-    fontSize: 20,
+    fontSize: 16,
     color: '#DC3545',
     fontWeight: 'bold',
   },
@@ -1881,58 +2318,187 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: '#FFFFFF',
   },
-  tagFieldPillRow: {
+  clipartChipWrap: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAFAFA',
-    borderWidth: 1,
-    borderColor: '#E5E5E5',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingLeft: 12,
-    paddingRight: 4,
-    marginBottom: 8,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
   },
-  tagFieldPillRowOnTag: {
-    borderColor: '#007AFF',
-    backgroundColor: '#F0F7FF',
-  },
-  tagFieldPillLabelPress: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 4,
-  },
-  tagFieldPillLabelText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1A1A1A',
-  },
-  tagFieldPillOrderHint: {
-    fontSize: 11,
-    color: '#666',
-    marginTop: 2,
-  },
-  tagFieldPillOrderHintMuted: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 2,
-    fontStyle: 'italic',
-  },
-  tagFieldPillReorder: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginRight: 4,
-  },
-  fieldRequiredStarWrap: {
+  clipartChip: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D8E1EA',
+    ...(Platform.OS === 'web' && ({ cursor: 'pointer' } as any)),
+  },
+  clipartChipText: {
+    fontSize: 18,
+  },
+  decoPreviewRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E5E5',
+  },
+  decoPreviewImg: {
+    width: 36,
+    height: 36,
+    borderRadius: 4,
+    backgroundColor: '#F5F5F5',
+  },
+  decoPreviewEmoji: {
+    fontSize: 22,
+    flex: 1,
+    minWidth: 0,
+  },
+  clearDecoButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: '#F0F0F0',
+    ...(Platform.OS === 'web' && ({ cursor: 'pointer' } as any)),
+  },
+  clearDecoButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  tagFieldPickGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+    ...(Platform.OS === 'web' && { width: '100%' as const }),
+  },
+  /** Two columns on phones; overridden on desktop for three columns. */
+  tagFieldPickCell: {
+    width: '48%',
+    flexGrow: 0,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  tagFieldPickCellDesktop: {
+    width: '31.5%',
+    maxWidth: '32%',
+  },
+  tagFieldPickCard: {
+    backgroundColor: '#FAFAFA',
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    borderRadius: 10,
+    overflow: 'hidden',
+    minHeight: 88,
+  },
+  tagFieldPickCardOnTag: {
+    borderColor: '#007AFF',
+    backgroundColor: '#F0F7FF',
+  },
+  tagFieldPickLabelPress: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    minWidth: 0,
+  },
+  tagFieldPickTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    lineHeight: 15,
+  },
+  tagFieldPickHintOn: {
+    fontSize: 10,
+    color: '#666',
+    marginTop: 3,
+  },
+  tagFieldPickHintOff: {
+    fontSize: 10,
+    color: '#999',
+    marginTop: 3,
+    fontStyle: 'italic',
+  },
+  tagFieldPickToolbar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E5E5',
+  },
+  tagFieldPickToolbarLeft: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    minWidth: 0,
+  },
+  tagFieldPickCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  tagFieldPickReorder: {
+    minWidth: 24,
+    minHeight: 24,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E5E5E5',
+    borderRadius: 5,
+  },
+  tagFieldPickReorderText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#555',
+  },
+  tagFieldPickEdit: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 5,
+    backgroundColor: '#E8F4FD',
+    borderWidth: 1,
+    borderColor: '#B3D9FF',
+    ...(Platform.OS === 'web' && ({ cursor: 'pointer' } as any)),
+  },
+  tagFieldPickEditText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  tagFieldPickStarWrap: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 5,
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && ({ cursor: 'pointer' } as any)),
+  },
+  tagFieldPickStarText: {
+    fontSize: 16,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  tagFieldPickEditorSlot: {
+    width: '100%',
+    marginBottom: 10,
+  },
+  fieldRequiredStarWrap: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
     ...(Platform.OS === 'web' && ({ cursor: 'pointer' } as any)),
   },
   fieldRequiredStarText: {
-    fontSize: 22,
-    lineHeight: 24,
+    fontSize: 18,
+    lineHeight: 20,
     fontWeight: '700',
   },
   fieldRequiredStarRed: {
@@ -1959,18 +2525,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   tagFieldEditButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginRight: 4,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
     backgroundColor: '#E8F4FD',
     borderWidth: 1,
     borderColor: '#B3D9FF',
     justifyContent: 'center',
+    minHeight: 28,
     ...(Platform.OS === 'web' && ({ cursor: 'pointer' } as any)),
   },
   tagFieldEditButtonText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#007AFF',
   },
@@ -1991,18 +2557,19 @@ const styles = StyleSheet.create({
   },
   tagFieldEditorSubmitButton: {
     backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'flex-start',
   },
   tagFieldEditorSubmitButtonPressed: {
     opacity: 0.88,
   },
   tagFieldEditorSubmitButtonText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
   },
   dataTypeChipsWrap: {
@@ -2012,9 +2579,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   dataTypeChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
     backgroundColor: '#F5F5F5',
     borderWidth: 1,
     borderColor: '#E5E5E5',
@@ -2024,7 +2591,7 @@ const styles = StyleSheet.create({
     borderColor: '#007AFF',
   },
   dataTypeChipText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: '#666',
   },
@@ -2097,36 +2664,43 @@ const styles = StyleSheet.create({
   },
   formActions: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 16,
   },
   cancelButton: {
-    flex: 1,
-    padding: 16,
+    flexGrow: 1,
+    flexBasis: '40%',
+    minWidth: 120,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
     backgroundColor: '#F5F5F5',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 48,
+    minHeight: 40,
     ...(Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' } as any),
   },
   cancelButtonText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#666',
   },
   saveButton: {
-    flex: 1,
-    padding: 16,
+    flexGrow: 1,
+    flexBasis: '40%',
+    minWidth: 120,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
     backgroundColor: '#007AFF',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 48,
+    minHeight: 40,
     ...(Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' } as any),
   },
   saveButtonText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
   },
@@ -2136,6 +2710,11 @@ const styles = StyleSheet.create({
   createButtonContainer: {
     padding: 20,
     paddingTop: 24,
+    alignItems: 'center',
+  },
+  createButtonContainerDesktop: {
+    paddingTop: 12,
+    paddingBottom: 12,
   },
   createButton: {
     backgroundColor: '#007AFF',
@@ -2143,6 +2722,8 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     minHeight: 56,
     ...cardShadow,
     ...(Platform.OS === 'web' && {
@@ -2169,34 +2750,89 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
+  sectionTitleTight: {
+    marginBottom: 10,
+    fontSize: 14,
+  },
   templatesList: {
     padding: 20,
     paddingTop: 0,
   },
-  templateLink: {
+  templatesListDesktop: {
+    maxWidth: 1680,
+    width: '100%',
+    alignSelf: 'center',
+    paddingTop: 0,
+    paddingBottom: 12,
+    ...(Platform.OS === 'web' && { boxSizing: 'border-box' as const }),
+  },
+  templateTileGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    width: '100%',
+    ...(Platform.OS === 'web' && { alignContent: 'flex-start' as const }),
+  },
+  templateLink: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginBottom: 12,
+    borderRadius: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E5E5E5',
     overflow: 'hidden',
   },
+  templateLinkDesktop: {
+    marginBottom: 0,
+    flexShrink: 0,
+  },
   templateLinkTouchable: {
-    flex: 1,
     padding: 16,
   },
-  templateDeleteButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  templateLinkTouchableDense: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  templatePreviewWrap: {
+    marginTop: 10,
+  },
+  templatePreviewWrapDense: {
+    marginTop: 4,
+  },
+  templateActionRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  templateActionRowDense: {
+    marginTop: 4,
+  },
+  templateEditButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    minHeight: 32,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 44,
-    minWidth: 72,
-    borderLeftWidth: 1,
-    borderLeftColor: '#E5E5E5',
+    backgroundColor: '#EEF6FF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' } as any),
+  },
+  templateEditButtonText: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  templateDeleteButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    minHeight: 32,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#FFE5E5',
-    zIndex: 1,
     ...(Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' } as any),
   },
   templateLinkContent: {
@@ -2222,9 +2858,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   templateLinkDescription: {
-    fontSize: 14,
+    fontSize: 12,
+    lineHeight: 16,
     color: '#666',
-    marginTop: 8,
+    marginTop: 4,
   },
   templateCard: {
     backgroundColor: '#FFFFFF',
@@ -2289,7 +2926,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFE5E5',
   },
   deleteButtonText: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#DC3545',
     fontWeight: '600',
   },

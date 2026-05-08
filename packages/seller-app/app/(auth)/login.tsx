@@ -12,10 +12,12 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import {
   devBypassPhoneVerificationSession,
+  FORM_CONTROL_MAX_WIDTH,
   normalizePhoneE164US,
   signInWithPhone,
 } from 'shared';
 import { continueSellerFlowAfterPhoneAuth } from '../../lib/afterSellerPhoneSession';
+import { extractEventIdFromSellerRedirect } from '../../lib/postAuthRedirect';
 import { theme } from '../../lib/theme';
 
 const showDevPhoneBypass =
@@ -80,7 +82,10 @@ export default function LoginScreen() {
 
     setBypassLoading(true);
     try {
-      const sessionUser = await devBypassPhoneVerificationSession(phoneE164);
+      const checkInEventId = extractEventIdFromSellerRedirect(redirect);
+      const sessionUser = await devBypassPhoneVerificationSession(phoneE164, {
+        checkInEventId,
+      });
       await continueSellerFlowAfterPhoneAuth(router, redirect, {
         knownPhoneE164: phoneE164,
         sessionUser,
@@ -183,6 +188,7 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     width: '100%',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     marginBottom: 20,
   },
   label: {
@@ -209,7 +215,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
-    width: '100%',
+    alignSelf: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     marginTop: 10,
   },
   primaryButtonDisabled: {
@@ -225,7 +232,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
-    width: '100%',
+    alignSelf: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     marginTop: 16,
     borderWidth: 2,
     borderColor: '#7A0000',

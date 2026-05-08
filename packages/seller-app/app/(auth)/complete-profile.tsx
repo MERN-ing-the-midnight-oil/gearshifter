@@ -12,6 +12,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   createSellerAfterPhoneProfile,
+  ensureSellerSwapRegistrationStub,
+  FORM_CONTROL_MAX_WIDTH,
   getCurrentSeller,
   getCurrentUser,
   tryNormalizePhoneE164US,
@@ -85,7 +87,7 @@ export default function CompleteSellerProfileScreen() {
         return;
       }
 
-      await createSellerAfterPhoneProfile({
+      const seller = await createSellerAfterPhoneProfile({
         authUserId: user.id,
         phoneE164: sessionPhone,
         firstName: firstName.trim(),
@@ -93,8 +95,30 @@ export default function CompleteSellerProfileScreen() {
         contactEmail: emailOptional.trim() || null,
       });
 
-      const eid = extractEventIdFromSellerRedirect(redirect);
-      if (eid) await setSellerDashboardEventId(eid);
+      const meta = user.user_metadata as Record<string, unknown> | undefined;
+      const rawInviteEvent =
+        typeof meta?.check_in_event_id === 'string' ? meta.check_in_event_id.trim() : '';
+      const inviteEventId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        rawInviteEvent
+      )
+        ? rawInviteEvent
+        : '';
+
+      const redirectEventId = extractEventIdFromSellerRedirect(redirect);
+      const eventToScope = redirectEventId ?? inviteEventId;
+
+      if (eventToScope) {
+        await setSellerDashboardEventId(eventToScope);
+        try {
+          await ensureSellerSwapRegistrationStub(seller.id, eventToScope);
+        } catch (e) {
+          console.warn(
+            '[complete-profile] Could not create event registration link (seller can still register in the app):',
+            e
+          );
+        }
+      }
+
       router.replace(resolveSellerPostAuthRedirect(redirect));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Could not save profile';
@@ -200,6 +224,9 @@ const styles = StyleSheet.create({
   },
   field: {
     marginBottom: 20,
+    width: '100%',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
+    alignSelf: 'center',
   },
   label: {
     fontSize: 14,
@@ -220,6 +247,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
+    alignSelf: 'center',
     marginTop: 12,
   },
   primaryButtonDisabled: {

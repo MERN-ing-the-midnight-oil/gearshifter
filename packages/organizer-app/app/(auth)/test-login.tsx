@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { signInWithEmail } from 'shared';
+import { FORM_CONTROL_MAX_WIDTH, signInWithEmail } from 'shared';
 import { theme } from '../../lib/theme';
 import { AXEL_TEST_ADMIN_EMAIL, AXEL_TEST_ADMIN_PASSWORD } from '../../lib/testAxelAdmin';
 
@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
   },
   hintBox: {
     width: '100%',
-    maxWidth: 400,
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     padding: 14,
     borderRadius: 12,
     backgroundColor: theme.surface,
@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     width: '100%',
-    maxWidth: 400,
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     marginBottom: 16,
   },
   label: {
@@ -189,8 +189,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
-    width: '100%',
-    maxWidth: 400,
+    alignSelf: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
     marginTop: 8,
   },
   loginButtonDisabled: {

@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import type { Seller } from '../types/models';
 import { generateSellerQRCode } from '../utils/qrCode';
 import { sellerPlaceholderEmailForAuthUserId, tryNormalizePhoneE164US } from '../utils/phone';
@@ -237,12 +237,9 @@ export const getSellerById = async (sellerId: string): Promise<Seller | null> =>
     .from('sellers')
     .select('*')
     .eq('id', sellerId)
-    .single();
+    .maybeSingle();
 
-  if (error) {
-    if (error.code === 'PGRST116') return null;
-    throw error;
-  }
+  if (error) throw error;
   return data ? mapSellerFromDb(data) : null;
 };
 
@@ -409,6 +406,8 @@ export const createSellerViaEdgeFunction = async (payload: {
   last_name: string;
   phone: string;
   email: string;
+  /** Organizer check-in: ties new seller to event so staff can read `sellers` via RLS */
+  event_id?: string;
 }): Promise<Seller> => {
   const { data, error } = await supabase.functions.invoke('create-seller', {
     body: payload,
@@ -452,6 +451,133 @@ export const searchSellers = async (query: string): Promise<Seller[]> => {
 
   if (error) throw error;
   return data.map(mapSellerFromDb);
+};
+
+function digitsOnlyPhone(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
+/**
+ * Find sellers whose phone matches the given input when compared digit-only
+ * (same idea as organizer walk-up duplicate check).
+ */
+export const lookupSellersByPhoneForCheckIn = async (rawPhone: string): Promise<Seller[]> => {
+  const trimmed = rawPhone.trim();
+  if (!trimmed) return [];
+
+  const digitKey = digitsOnlyPhone(trimmed);
+  if (digitKey.length < 10) return [];
+
+  const byId = new Map<string, Seller>();
+
+  const add = (s: Seller | null | undefined) => {
+    if (s) byId.set(s.id, s);
+  };
+
+  add(await getSellerByPhone(trimmed).catch(() => null));
+
+  const e164 = tryNormalizePhoneE164US(trimmed);
+  if (e164 && e164 !== trimmed) {
+    add(await getSellerByPhone(e164).catch(() => null));
+  }
+
+  const searchResults = await searchSellers(digitKey).catch(() => []);
+  for (const s of searchResults) {
+    if (digitsOnlyPhone(s.phone) === digitKey) add(s);
+  }
+
+  return [...byId.values()];
+};
+
+/**
+ * Staff at check-in: text the seller app sign-in code (Supabase phone OTP).
+ * Caller must be signed in as an org user with check-in access for the event's organization.
+ *
+ * Default: error if a seller profile already exists for that phone (avoids duplicate sign-up).
+ * Set `resendForExistingSeller: true` to text an existing seller so they can sign in again (e.g. register-seller flow).
+ *
+ * When `simulatedSms` is true (local Supabase or Edge secret ALLOW_DEV_PHONE_BYPASS=true), no SMS is sent;
+ * the function prepares the auth user so the seller can use SKIP VERIFICATION in the seller app.
+ */
+export const sendSellerCheckInSignupSms = async (input: {
+  phone: string;
+  eventId: string;
+  resendForExistingSeller?: boolean;
+}): Promise<{ simulatedSms: boolean }> => {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+  if (userError || !user) {
+    throw new Error('You must be signed in to send a seller invite.');
+  }
+
+  const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+  let accessToken = refreshed.session?.access_token;
+  if (!accessToken) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    accessToken = session?.access_token;
+  }
+  if (!accessToken) {
+    throw new Error(
+      refreshError?.message || 'Could not get a session token. Sign out and sign in again, then retry.'
+    );
+  }
+
+  let token = accessToken.trim();
+  if (token.toLowerCase().startsWith('bearer ')) {
+    token = token.slice(7).trim();
+  }
+
+  const fnUrl = `${supabaseUrl}/functions/v1/send-seller-check-in-sms`;
+  const body = {
+    phone: input.phone.trim(),
+    event_id: input.eventId.trim(),
+    ...(input.resendForExistingSeller ? { resend_for_existing_seller: true } : {}),
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(fnUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        apikey: supabaseAnonKey,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const inner = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Could not reach ${fnUrl} (${inner}). ` +
+        'If the browser reports a CORS error on send-seller-check-in-sms, the hosted function is still enforcing JWT on the OPTIONS preflight. ' +
+        'Redeploy with: supabase functions deploy send-seller-check-in-sms --no-verify-jwt ' +
+        '(or Dashboard → Edge Functions → send-seller-check-in-sms → turn off JWT verification). ' +
+        'Repo setting: supabase/config.toml [functions.send-seller-check-in-sms] verify_jwt = false.'
+    );
+  }
+
+  let payload: { error?: string; ok?: boolean; simulated_sms?: boolean } = {};
+  try {
+    payload = (await res.json()) as typeof payload;
+  } catch {
+    /* non-JSON body */
+  }
+
+  if (!res.ok) {
+    const msg = (typeof payload.error === 'string' && payload.error) || `Edge Function HTTP ${res.status}`;
+    const hint =
+      res.status === 401 || res.status === 403
+        ? ' If this is from Expo Web, redeploy send-seller-check-in-sms with --no-verify-jwt so OPTIONS succeeds.'
+        : '';
+    throw new Error(msg + hint);
+  }
+
+  return { simulatedSms: payload.simulated_sms === true };
 };
 
 /**

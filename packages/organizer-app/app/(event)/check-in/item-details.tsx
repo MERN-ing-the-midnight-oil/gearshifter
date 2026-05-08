@@ -8,17 +8,27 @@ import {
   Alert,
   Platform,
   Image,
+  TextInput,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import {
+  STAFF_FLOW_CONTENT_MAX_WIDTH,
+  STAFF_MOBILE_EDGE_PADDING,
+  STAFF_MOBILE_HEADER_PADDING_TOP,
+  STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   getItem,
   updateItemStatus,
   useEvent,
   formatSellerItemStatusLabel,
   uploadItemCheckInPhotoFromUri,
   getItemCheckInPhotoSignedUrl,
+  itemHasCheckInReceiveDocumentation,
+  MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH,
+  updateItemCheckInStaffDescription,
+  notifySellerOnCheckIn,
   type Item,
   type ItemStatus,
 } from 'shared';
@@ -62,7 +72,35 @@ export default function CheckInItemDetailsScreen() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const [checkInPreviewUrl, setCheckInPreviewUrl] = useState<string | null>(null);
   const [checkInPreviewLoading, setCheckInPreviewLoading] = useState(false);
+  const [staffDescDraft, setStaffDescDraft] = useState('');
+  const receiveWelcomeRef = useRef<string | null>(null);
   const { event } = useEvent(typeof eventId === 'string' ? eventId : null);
+
+  useEffect(() => {
+    if (item) setStaffDescDraft(item.checkInStaffDescription ?? '');
+  }, [item?.id]);
+
+  const receiveDocReady =
+    !!item?.checkInPhotoStoragePath?.trim() ||
+    staffDescDraft.trim().length >= MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!item || item.status !== 'pending') return;
+      if (itemHasCheckInReceiveDocumentation(item)) return;
+      const key = `${item.id}:receive-hint`;
+      if (receiveWelcomeRef.current === key) return;
+      receiveWelcomeRef.current = key;
+      const web = Platform.OS === 'web';
+      Alert.alert(
+        'Receive this item',
+        web
+          ? 'Before registering, enter a short handoff description of the physical item. The seller cannot submit check-in photos in advance; staff documents receipt here.'
+          : 'Before registering, take a check-in photo with the camera or write what you verified at handoff. Check-in photos are captured only by staff here, not by the seller ahead of time.',
+        [{ text: 'OK' }]
+      );
+    }, [item])
+  );
 
   useEffect(() => {
     if (!itemId) return;
@@ -150,12 +188,29 @@ export default function CheckInItemDetailsScreen() {
 
   const handleCheckIn = async () => {
     if (!item || item.status !== 'pending') return;
+    const photoOk = !!item.checkInPhotoStoragePath?.trim();
+    const descOk = staffDescDraft.trim().length >= MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH;
+    if (!photoOk && !descOk) {
+      Alert.alert(
+        'Photo or handoff description required',
+        Platform.OS === 'web'
+          ? `On web, enter at least ${MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH} characters describing the physical item you accepted, then tap Register item again.`
+          : `Take a check-in photo, or write at least ${MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH} characters describing the physical item you accepted (what you verified matches this listing).`
+      );
+      return;
+    }
     setUpdating(true);
     try {
-      const updated = await updateItemStatus(item.id, 'checked_in', {
+      let nextItem = item;
+      if (!photoOk && descOk) {
+        nextItem = await updateItemCheckInStaffDescription(item.id, staffDescDraft);
+        setItem(nextItem);
+      }
+      const updated = await updateItemStatus(nextItem.id, 'checked_in', {
         checkedInAt: new Date(),
       });
       setItem(updated);
+      void notifySellerOnCheckIn(updated.id);
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Failed to check in item');
     } finally {
@@ -240,8 +295,8 @@ export default function CheckInItemDetailsScreen() {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Item not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Go Back</Text>
+        <TouchableOpacity style={styles.errorScreenButton} onPress={() => router.back()}>
+          <Text style={styles.errorScreenButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -254,6 +309,7 @@ export default function CheckInItemDetailsScreen() {
       : '') ||
     'No description';
   const statusLabel = organizerCheckInStatusLabel(item.status);
+  const staffCharsLeft = Math.max(0, MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH - staffDescDraft.trim().length);
 
   return (
     <ScrollView style={styles.container}>
@@ -268,15 +324,95 @@ export default function CheckInItemDetailsScreen() {
         </View>
         {item.status === 'pending' && (
           <Text style={styles.hintText}>
-            Pre-registered online. When the seller hands in this piece of gear, tap Register item below.
+            Pre-registered online. When the seller hands in this piece of gear, document what you received (photo or
+            handoff notes), then tap Register item.
           </Text>
         )}
       </View>
+
+      {item.status === 'pending' && (
+        <View style={styles.receiveSection}>
+          <Text style={styles.sectionTitle}>Receive at handoff (required)</Text>
+          <View style={styles.receiveCallout}>
+            <Text style={styles.receiveCalloutText}>
+              Staff must either take a check-in photo with this device&apos;s camera or write a short description of the
+              physical item you are accepting. Seller listings alone are not enough to register receipt.
+            </Text>
+          </View>
+          <Text style={styles.label}>Handoff description (if not using a photo)</Text>
+          <TextInput
+            style={styles.staffDescInput}
+            value={staffDescDraft}
+            onChangeText={setStaffDescDraft}
+            placeholder={`At least ${MIN_CHECK_IN_STAFF_DESCRIPTION_LENGTH} characters: what you see on the item and tag`}
+            placeholderTextColor="#999"
+            multiline
+            editable={!updating && !photoUploading}
+            textAlignVertical="top"
+          />
+          <Text style={styles.charHint}>
+            {item.checkInPhotoStoragePath?.trim()
+              ? 'Photo on file — description is optional.'
+              : staffCharsLeft > 0
+                ? `${staffCharsLeft} more character${staffCharsLeft === 1 ? '' : 's'} needed (or take a photo).`
+                : 'Enough text to register without a photo.'}
+          </Text>
+          <Text style={[styles.sectionTitle, styles.photoBlockTitle]}>Check-in photo</Text>
+          <Text style={styles.photoHint}>
+            Use the camera so the image is captured at the event. Compare at POS to reduce tag switching.
+          </Text>
+          {checkInPreviewLoading ? (
+            <ActivityIndicator style={styles.photoSpinner} color="#007AFF" />
+          ) : checkInPreviewUrl ? (
+            <Image
+              source={{ uri: checkInPreviewUrl }}
+              style={styles.checkInPhoto}
+              resizeMode="cover"
+              accessibilityLabel="Check-in reference photo"
+            />
+          ) : (
+            <Text style={styles.photoEmpty}>No check-in photo yet</Text>
+          )}
+          {item.checkInPhotoCapturedAt ? (
+            <Text style={styles.photoMeta}>
+              Captured {new Date(item.checkInPhotoCapturedAt).toLocaleString()}
+            </Text>
+          ) : null}
+          <TouchableOpacity
+            style={[styles.photoButton, (photoUploading || printing || updating) && styles.buttonDisabled]}
+            onPress={openCameraAndUpload}
+            disabled={photoUploading || printing || updating}
+          >
+            {photoUploading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.photoButtonText}>
+                {item.checkInPhotoStoragePath ? 'Retake check-in photo' : 'Open camera — take check-in photo'}
+              </Text>
+            )}
+          </TouchableOpacity>
+          {Platform.OS !== 'web' ? (
+            <TouchableOpacity
+              style={[styles.photoButtonSecondary, (photoUploading || printing || updating) && styles.buttonDisabled]}
+              onPress={handlePrintThenPhoto}
+              disabled={photoUploading || printing || updating}
+            >
+              <Text style={styles.photoButtonSecondaryText}>Print label then take photo</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      )}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Details</Text>
         <Text style={styles.label}>Description</Text>
         <Text style={styles.value}>{description}</Text>
+        {item.checkInStaffDescription ? (
+          <>
+            <Text style={styles.label}>Staff handoff notes (at check-in)</Text>
+            <Text style={styles.value}>{item.checkInStaffDescription}</Text>
+          </>
+        ) : null}
         <Text style={styles.label}>Original price</Text>
         <Text style={styles.value}>${item.originalPrice.toFixed(2)}</Text>
         {item.reducedPrice != null && (
@@ -293,52 +429,28 @@ export default function CheckInItemDetailsScreen() {
         )}
       </View>
 
-      <View style={styles.photoSection}>
-        <Text style={styles.sectionTitle}>Check-in photo (optional)</Text>
-        <Text style={styles.photoHint}>
-          Staff can photograph the item with its tag when printing. At POS, that photo helps confirm the physical item
-          matches this record (reduces tag switching).
-        </Text>
-        {checkInPreviewLoading ? (
-          <ActivityIndicator style={styles.photoSpinner} color="#007AFF" />
-        ) : checkInPreviewUrl ? (
-          <Image
-            source={{ uri: checkInPreviewUrl }}
-            style={styles.checkInPhoto}
-            resizeMode="cover"
-            accessibilityLabel="Check-in reference photo"
-          />
-        ) : (
-          <Text style={styles.photoEmpty}>No check-in photo yet</Text>
-        )}
-        {item.checkInPhotoCapturedAt ? (
-          <Text style={styles.photoMeta}>
-            Captured {new Date(item.checkInPhotoCapturedAt).toLocaleString()}
-          </Text>
-        ) : null}
-        <TouchableOpacity
-          style={[styles.photoButton, (photoUploading || printing || updating) && styles.buttonDisabled]}
-          onPress={openCameraAndUpload}
-          disabled={photoUploading || printing || updating}
-        >
-          {photoUploading ? (
-            <ActivityIndicator color="#FFFFFF" />
+      {item.status !== 'pending' && (
+        <View style={styles.photoSection}>
+          <Text style={styles.sectionTitle}>Check-in photo</Text>
+          {checkInPreviewLoading ? (
+            <ActivityIndicator style={styles.photoSpinner} color="#007AFF" />
+          ) : checkInPreviewUrl ? (
+            <Image
+              source={{ uri: checkInPreviewUrl }}
+              style={styles.checkInPhoto}
+              resizeMode="cover"
+              accessibilityLabel="Check-in reference photo"
+            />
           ) : (
-            <Text style={styles.photoButtonText}>
-              {item.checkInPhotoStoragePath ? 'Retake check-in photo' : 'Take check-in photo'}
-            </Text>
+            <Text style={styles.photoEmpty}>No check-in photo on file</Text>
           )}
-        </TouchableOpacity>
-        {Platform.OS !== 'web' ? (
-          <TouchableOpacity
-            style={[styles.photoButtonSecondary, (photoUploading || printing || updating) && styles.buttonDisabled]}
-            onPress={handlePrintThenPhoto}
-            disabled={photoUploading || printing || updating}
-          >
-            <Text style={styles.photoButtonSecondaryText}>Print label &amp; take photo</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+          {item.checkInPhotoCapturedAt ? (
+            <Text style={styles.photoMeta}>
+              Captured {new Date(item.checkInPhotoCapturedAt).toLocaleString()}
+            </Text>
+          ) : null}
+        </View>
+      )}
 
       <View style={styles.actions}>
         <TouchableOpacity
@@ -354,9 +466,12 @@ export default function CheckInItemDetailsScreen() {
         </TouchableOpacity>
         {item.status === 'pending' && (
           <TouchableOpacity
-            style={[styles.primaryButton, (updating || photoUploading) && styles.buttonDisabled]}
+            style={[
+              styles.primaryButton,
+              (updating || photoUploading || !receiveDocReady) && styles.buttonDisabled,
+            ]}
             onPress={handleCheckIn}
-            disabled={updating || photoUploading}
+            disabled={updating || photoUploading || !receiveDocReady}
           >
             {updating ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -389,12 +504,13 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: STAFF_MOBILE_EDGE_PADDING,
   },
   loadingText: { marginTop: 10, color: '#666' },
   header: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: STAFF_MOBILE_HEADER_PADDING_TOP,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
@@ -422,34 +538,86 @@ const styles = StyleSheet.create({
   statusPickedup: { backgroundColor: '#E2E3E5' },
   statusDonated: { backgroundColor: '#F8D7DA' },
   statusText: { fontSize: 12, fontWeight: '600', color: '#1A1A1A' },
-  section: { padding: 20, backgroundColor: '#FFFFFF', marginTop: 12, marginHorizontal: 20, borderRadius: 12 },
+  section: {
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingVertical: STAFF_MOBILE_EDGE_PADDING,
+    backgroundColor: '#FFFFFF',
+    marginTop: 12,
+    marginHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    borderRadius: 12,
+  },
   sectionTitle: { fontSize: 18, fontWeight: '600', color: '#1A1A1A', marginBottom: 12 },
   label: { fontSize: 12, color: '#666', marginTop: 12, marginBottom: 4 },
   value: { fontSize: 16, color: '#1A1A1A' },
-  actions: { padding: 20, paddingTop: 24 },
+  actions: {
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingTop: 20,
+    paddingBottom: STAFF_MOBILE_EDGE_PADDING + 16,
+  },
   primaryButton: {
     backgroundColor: '#007AFF',
     borderRadius: 12,
-    padding: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   buttonDisabled: { opacity: 0.6 },
   primaryButtonText: { color: '#FFFFFF', fontSize: 18, fontWeight: '600' },
   secondaryButton: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
     marginBottom: 12,
     borderWidth: 2,
     borderColor: '#007AFF',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   secondaryButtonText: { color: '#007AFF', fontSize: 18, fontWeight: '600' },
-  photoSection: {
-    padding: 20,
+  receiveSection: {
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingVertical: STAFF_MOBILE_EDGE_PADDING,
     backgroundColor: '#FFFFFF',
     marginTop: 12,
-    marginHorizontal: 20,
+    marginHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#007AFF',
+  },
+  receiveCallout: {
+    backgroundColor: '#E3F2FD',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  receiveCalloutText: { fontSize: 14, color: '#1565C0', lineHeight: 20 },
+  staffDescInput: {
+    backgroundColor: '#FAFAFA',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    minHeight: 100,
+    color: '#1A1A1A',
+  },
+  charHint: { fontSize: 12, color: '#666', marginTop: 6, marginBottom: 16 },
+  photoBlockTitle: { marginTop: 4 },
+  photoSection: {
+    paddingHorizontal: STAFF_MOBILE_EDGE_PADDING,
+    paddingVertical: STAFF_MOBILE_EDGE_PADDING,
+    backgroundColor: '#FFFFFF',
+    marginTop: 12,
+    marginHorizontal: STAFF_MOBILE_EDGE_PADDING,
     borderRadius: 12,
   },
   photoHint: {
@@ -472,20 +640,38 @@ const styles = StyleSheet.create({
     backgroundColor: '#5856D6',
     borderRadius: 12,
     paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
     marginBottom: 10,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   photoButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   photoButtonSecondary: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: STAFF_FLOW_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
     borderWidth: 2,
     borderColor: '#5856D6',
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
   },
   photoButtonSecondaryText: { color: '#5856D6', fontSize: 16, fontWeight: '600' },
   errorText: { fontSize: 18, fontWeight: '600', color: '#DC3545', marginBottom: 20 },
-  backButton: { backgroundColor: '#007AFF', borderRadius: 8, paddingHorizontal: 24, paddingVertical: 12 },
-  backButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  errorScreenButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: STAFF_MOBILE_MIN_TOUCH_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorScreenButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 });

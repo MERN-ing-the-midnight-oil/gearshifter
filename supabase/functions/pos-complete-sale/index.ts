@@ -316,5 +316,5 @@ Deno.serve(async (req) => {
     console.warn('pos-complete-sale: notify-seller-on-sale failed', e);
   }
 
-  return json({ ok: true, transaction: transactionData });
+  return json({ ok: true, transaction: transactionData, buyer_receipt_url: receiptUrl });
 });

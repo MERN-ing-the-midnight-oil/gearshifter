@@ -1,5 +1,11 @@
 import { supabase } from './supabase';
-import type { GearTagTemplate, TagField, TagLayoutType, QRCodePosition } from '../types/models';
+import type {
+  GearTagTemplate,
+  TagField,
+  TagLayoutType,
+  QRCodePosition,
+  TagPrintOrientation,
+} from '../types/models';
 import { getCategory } from './categories';
 import { sanitizeGearTagTemplatePriceSemantics } from '../utils/tagTemplateFields';
 
@@ -120,9 +126,12 @@ export const createGearTagTemplate = async (
     borderWidth?: number;
     qrCodeSize?: number;
     qrCodePosition?: QRCodePosition;
+    qrCodeOffsetXMm?: number;
+    qrCodeOffsetYMm?: number;
     qrCodeEnabled?: boolean;
     qrCodeDataFields?: string[];
     qrCodeSellerAccess?: string[];
+    tagOrientation?: TagPrintOrientation;
     isDefault?: boolean;
     displayOrder?: number;
   }
@@ -154,9 +163,14 @@ export const createGearTagTemplate = async (
     border_width: templateData.borderWidth || 0.5,
     qr_code_size: templateData.qrCodeSize || 15.0,
     qr_code_position: templateData.qrCodePosition || 'bottom-right',
+    qr_code_offset_x_mm: templateData.qrCodeOffsetXMm ?? 0,
+    qr_code_offset_y_mm: templateData.qrCodeOffsetYMm ?? 0,
     qr_code_enabled: templateData.qrCodeEnabled !== undefined ? templateData.qrCodeEnabled : true,
     qr_code_data_fields: templateData.qrCodeDataFields || ['item_number'],
     qr_code_seller_access: templateData.qrCodeSellerAccess || [],
+    tag_orientation:
+      templateData.tagOrientation ??
+      ((templateData.widthMm || 50) > (templateData.heightMm || 30) ? 'landscape' : 'portrait'),
     is_default: templateData.isDefault || false,
     display_order: templateData.displayOrder || 0,
   });
@@ -205,9 +219,12 @@ export const updateGearTagTemplate = async (
     borderWidth?: number;
     qrCodeSize?: number;
     qrCodePosition?: QRCodePosition;
+    qrCodeOffsetXMm?: number;
+    qrCodeOffsetYMm?: number;
     qrCodeEnabled?: boolean;
     qrCodeDataFields?: string[];
     qrCodeSellerAccess?: string[];
+    tagOrientation?: TagPrintOrientation;
     isDefault?: boolean;
     isActive?: boolean;
     displayOrder?: number;
@@ -263,7 +280,10 @@ export const updateGearTagTemplate = async (
   if (updates.borderWidth !== undefined) updateData.border_width = updates.borderWidth;
   if (updates.qrCodeSize !== undefined) updateData.qr_code_size = updates.qrCodeSize;
   if (updates.qrCodePosition !== undefined) updateData.qr_code_position = updates.qrCodePosition;
+  if (updates.qrCodeOffsetXMm !== undefined) updateData.qr_code_offset_x_mm = updates.qrCodeOffsetXMm;
+  if (updates.qrCodeOffsetYMm !== undefined) updateData.qr_code_offset_y_mm = updates.qrCodeOffsetYMm;
   if (updates.qrCodeEnabled !== undefined) updateData.qr_code_enabled = updates.qrCodeEnabled;
+  if (updates.tagOrientation !== undefined) updateData.tag_orientation = updates.tagOrientation;
   if (updates.qrCodeDataFields !== undefined) updateData.qr_code_data_fields = updates.qrCodeDataFields;
   if (updates.qrCodeSellerAccess !== undefined) updateData.qr_code_seller_access = updates.qrCodeSellerAccess;
   if (updates.isDefault !== undefined) updateData.is_default = updates.isDefault;
@@ -302,6 +322,15 @@ export const deleteGearTagTemplate = async (templateId: string): Promise<void> =
   console.log('[gearTagTemplates] deleteGearTagTemplate succeeded');
 };
 
+function normalizeTagOrientation(
+  raw: unknown,
+  widthMm: number,
+  heightMm: number
+): TagPrintOrientation {
+  if (raw === 'landscape' || raw === 'portrait') return raw;
+  return widthMm > heightMm ? 'landscape' : 'portrait';
+}
+
 /**
  * Helper to map database tag template to GearTagTemplate model
  */
@@ -309,14 +338,16 @@ function mapTagTemplateFromDb(dbTemplate: any): GearTagTemplate {
   const rawFields = (dbTemplate.tag_fields as TagField[]) || [];
   const rawRequired = (dbTemplate.required_fields as string[]) || [];
   const { tagFields, requiredFields } = sanitizeGearTagTemplatePriceSemantics(rawFields, rawRequired);
+  const widthMm = parseFloat(dbTemplate.width_mm);
+  const heightMm = parseFloat(dbTemplate.height_mm);
   return {
     id: dbTemplate.id,
     organizationId: dbTemplate.organization_id,
     name: dbTemplate.name,
     description: dbTemplate.description,
     layoutType: dbTemplate.layout_type as TagLayoutType,
-    widthMm: parseFloat(dbTemplate.width_mm),
-    heightMm: parseFloat(dbTemplate.height_mm),
+    widthMm,
+    heightMm,
     tagFields,
     requiredFields: requiredFields ?? rawRequired,
     categoryIds: dbTemplate.category_ids || undefined,
@@ -325,9 +356,14 @@ function mapTagTemplateFromDb(dbTemplate: any): GearTagTemplate {
     borderWidth: parseFloat(dbTemplate.border_width),
     qrCodeSize: parseFloat(dbTemplate.qr_code_size),
     qrCodePosition: dbTemplate.qr_code_position as QRCodePosition,
+    qrCodeOffsetXMm:
+      dbTemplate.qr_code_offset_x_mm != null ? parseFloat(dbTemplate.qr_code_offset_x_mm) : 0,
+    qrCodeOffsetYMm:
+      dbTemplate.qr_code_offset_y_mm != null ? parseFloat(dbTemplate.qr_code_offset_y_mm) : 0,
     qrCodeEnabled: dbTemplate.qr_code_enabled !== undefined ? dbTemplate.qr_code_enabled : true,
     qrCodeDataFields: dbTemplate.qr_code_data_fields || ['item_number'],
     qrCodeSellerAccess: dbTemplate.qr_code_seller_access || [],
+    tagOrientation: normalizeTagOrientation(dbTemplate.tag_orientation, widthMm, heightMm),
     isDefault: dbTemplate.is_default,
     isActive: dbTemplate.is_active,
     displayOrder: dbTemplate.display_order,

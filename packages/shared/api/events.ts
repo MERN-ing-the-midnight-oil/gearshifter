@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Event, EventStatus, EventSettings, Organization, ItemStatus } from '../types/models';
+import { mapOrganizationFromDb } from './organizations';
 import { isItemDonatedToOrg } from '../constants/statuses';
 import { isEventArchiveEligible } from '../utils/eventArchiveEligibility';
 import { ensureDefaultSwapRegistrationFieldsForOrganization } from './swapRegistrationFields';
@@ -21,7 +22,10 @@ export const getEvent = async (eventId: string): Promise<EventWithOrganization |
         name,
         slug,
         commission_rate,
-        vendor_commission_rate
+        vendor_commission_rate,
+        price_reduction_settings,
+        sale_behavior_settings,
+        created_at
       )
     `)
     .eq('id', eventId)
@@ -105,22 +109,7 @@ export const getAdminOrganization = async (adminUserId: string): Promise<Organiz
     return null;
   }
 
-  const defaultPriceReductionSettings = {
-    sellerCanSetReduction: true,
-    sellerCanSetTime: true,
-    defaultReductionTime: undefined,
-    allowedReductionTimes: [],
-  };
-
-  return {
-    id: org.id,
-    name: org.name,
-    slug: org.slug,
-    commissionRate: parseFloat(org.commission_rate),
-    vendorCommissionRate: parseFloat(org.vendor_commission_rate),
-    priceReductionSettings: (org.price_reduction_settings as any) || defaultPriceReductionSettings,
-    createdAt: new Date(org.created_at),
-  };
+  return mapOrganizationFromDb(org);
 };
 
 /**
@@ -147,7 +136,10 @@ export const getOrganizationEvents = async (adminUserId: string): Promise<EventW
         name,
         slug,
         commission_rate,
-        vendor_commission_rate
+        vendor_commission_rate,
+        price_reduction_settings,
+        sale_behavior_settings,
+        created_at
       )
     `)
     .eq('organization_id', adminUser.organization_id)
@@ -460,25 +452,10 @@ function mapEventFromDb(dbEvent: any): Event {
 function mapEventWithOrgFromDb(dbEvent: any): EventWithOrganization {
   const event = mapEventFromDb(dbEvent);
   const org = dbEvent.organizations;
-  
-  const defaultPriceReductionSettings = {
-    sellerCanSetReduction: true,
-    sellerCanSetTime: true,
-    defaultReductionTime: undefined,
-    allowedReductionTimes: [],
-  };
 
   return {
     ...event,
-    organization: org ? {
-      id: org.id,
-      name: org.name,
-      slug: org.slug,
-      commissionRate: parseFloat(org.commission_rate),
-      vendorCommissionRate: parseFloat(org.vendor_commission_rate),
-      priceReductionSettings: (org.price_reduction_settings as any) || defaultPriceReductionSettings,
-      createdAt: new Date(org.created_at || Date.now()),
-    } : undefined,
+    organization: org ? mapOrganizationFromDb(org) : undefined,
   };
 }
 

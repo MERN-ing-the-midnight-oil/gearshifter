@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useEffect } from 'react';
-import { useEvent, isSellerSwapRegistrationWindowOpen } from 'shared';
+import { FORM_CONTROL_MAX_WIDTH, useEvent, isSellerSwapRegistrationWindowOpen } from 'shared';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from 'shared';
 import { setSellerDashboardEventId } from '../../../lib/sellerDashboardEventStorage';
@@ -362,6 +362,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
+    alignSelf: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -378,6 +380,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
+    maxWidth: FORM_CONTROL_MAX_WIDTH,
+    alignSelf: 'center',
     borderWidth: 2,
     borderColor: '#007AFF',
     shadowColor: '#000',
